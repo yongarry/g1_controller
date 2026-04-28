@@ -36,13 +36,13 @@ G1Controller::G1Controller(std::string networkInterface)
     ChannelFactory::Instance()->Init(0, networkInterface);
     // try to shutdown motion control-related service
     msc_ = std::make_shared<unitree::robot::b2::MotionSwitcherClient>();
-    msc_->SetTimeout(5.0f);
+    msc_->SetTimeout(0.5f);
     msc_->Init();
     std::string form, name;
     while (msc_->CheckMode(form, name), !name.empty()) {
     if (msc_->ReleaseMode())
         std::cout << "Failed to switch to Release Mode\n";
-    sleep(5);
+    sleep(0.5);
     }
     // create publisher
     motor_cmd_publisher_.reset(new ChannelPublisher<LowCmd_>(HG_CMD_TOPIC));
@@ -53,11 +53,13 @@ G1Controller::G1Controller(std::string networkInterface)
     imu_state_subscriber_.reset(new ChannelSubscriber<IMUState_>(HG_IMU_TORSO));
     imu_state_subscriber_->InitChannel(std::bind(&G1Controller::imuDataHandler, this, std::placeholders::_1), 1);
     // create threads
-    compute_thread_ptr_ = CreateRecurrentThreadEx("compute", 31, control_us_, &G1Controller::Compute, this);
+    compute_thread_ptr_ = CreateRecurrentThreadEx("compute", 11, control_us_, &G1Controller::Compute, this);
 
     pin_q_index_from_motor_.fill(-1);
-    const std::string urdf_path = "/home/yong/Unitree_G1_ws/g1_controller/urdf/g1_29dof.urdf";
-    pinocchio_ready_ = initializePinocchioModel(urdf_path);
+    // g1_controller/urdf/g1_29dof.urdf — resolved from this source file (../.. from src/)
+    const std::filesystem::path urdf_path =
+        std::filesystem::path(__FILE__).parent_path().parent_path() / "urdf" / "g1_29dof.urdf";
+    pinocchio_ready_ = initializePinocchioModel(urdf_path.string());
     if (!pinocchio_ready_) {
       std::cerr << "[WARN] Pinocchio is disabled because URDF model init failed." << std::endl;
     }
@@ -224,8 +226,13 @@ void G1Controller::Compute() {
     dds_low_command.motor_cmd().at(RightHipPitch).q() = -0.2f;
     dds_low_command.motor_cmd().at(RightKnee).q() = 0.5f;
     dds_low_command.motor_cmd().at(RightAnklePitch).q() = -0.3f;
-    dds_low_command.motor_cmd().at(LeftShoulderPitch).q() = 0.7f;
-    dds_low_command.motor_cmd().at(RightShoulderPitch).q() = 0.7f;
+
+    dds_low_command.motor_cmd().at(LeftShoulderPitch).q() = 0.1f;
+    dds_low_command.motor_cmd().at(RightShoulderPitch).q() = 0.1f;
+    dds_low_command.motor_cmd().at(LeftShoulderRoll).q() = 0.2f;
+    dds_low_command.motor_cmd().at(RightShoulderRoll).q() = -0.2f;
+    dds_low_command.motor_cmd().at(LeftElbow).q() = 1.1f;
+    dds_low_command.motor_cmd().at(RightElbow).q() = 1.1f;
 
     dds_low_command.crc() = Crc32Core((uint32_t *)&dds_low_command, (sizeof(dds_low_command) >> 2) - 1);
     motor_cmd_publisher_->Write(dds_low_command);
