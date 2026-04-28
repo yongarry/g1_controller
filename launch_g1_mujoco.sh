@@ -14,7 +14,17 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MUJOCO_BIN="${ROOT}/unitree_mujoco/simulate/build/unitree_mujoco"
-G1_BIN="${ROOT}/g1_controller/build/g1_ctl"
+
+# Prefer the unified superbuild outputs (g1_controller/CMakeLists.txt at repo root),
+# but keep backward-compatible fallbacks for older per-project builds.
+G1_BIN="${ROOT}/g1_controller/build/g1_controller/g1_ctl"
+GUI_BIN="${ROOT}/g1_controller/build/g1_gui/g1_gui_server"
+if [[ ! -x "$G1_BIN" ]]; then
+  G1_BIN="${ROOT}/g1_controller/build/g1_ctl"
+fi
+if [[ ! -x "$GUI_BIN" ]]; then
+  GUI_BIN="${ROOT}/g1_gui/build/g1_gui_server"
+fi
 
 if [[ ! -x "$MUJOCO_BIN" ]]; then
   echo "error: not found or not executable: $MUJOCO_BIN" >&2
@@ -23,7 +33,12 @@ if [[ ! -x "$MUJOCO_BIN" ]]; then
 fi
 if [[ ! -x "$G1_BIN" ]]; then
   echo "error: not found or not executable: $G1_BIN" >&2
-  echo "  build: cmake --build g1_controller/build" >&2
+  echo "  build: mkdir -p g1_controller/build && cd g1_controller/build && cmake .. && cmake --build ." >&2
+  exit 1
+fi
+if [[ ! -x "$GUI_BIN" ]]; then
+  echo "error: not found or not executable: $GUI_BIN" >&2
+  echo "  build: mkdir -p g1_controller/build && cd g1_controller/build && cmake .. && cmake --build ." >&2
   exit 1
 fi
 
@@ -43,9 +58,11 @@ fi
 
 MJ_PID=""
 G1_PID=""
+GUI_PID=""
 cleanup() {
   local code="${1:-0}"
   trap - EXIT INT TERM
+  [[ -n "${GUI_PID}" ]] && kill "$GUI_PID" 2>/dev/null || true
   [[ -n "${G1_PID}" ]] && kill "$G1_PID" 2>/dev/null || true
   [[ -n "${MJ_PID}" ]] && kill "$MJ_PID" 2>/dev/null || true
   wait 2>/dev/null || true
@@ -61,6 +78,10 @@ MJ_PID=$!
 echo "[launch] g1_ctl: $G1_BIN $IFACE"
 "$G1_BIN" "$IFACE" &
 G1_PID=$!
+
+echo "[launch] g1_gui_server: $GUI_BIN $IFACE 4710"
+"$GUI_BIN" "$IFACE" 4710 &
+GUI_PID=$!
 
 # When either process exits, stop the other (like launch shutting down all nodes).
 set +e
