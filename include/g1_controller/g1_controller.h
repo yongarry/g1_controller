@@ -75,18 +75,18 @@ struct MotorState {
 
 // Stiffness for all G1 Joints
 inline const std::array<float, G1_NUM_MOTOR> Kp{
-    200, 100, 40, 200, 228.5, 28.5,      // legs
-    200, 100, 40, 200, 228.5, 28.5,      // legs
-    60, 40, 40,                   // waist
+    350, 100, 40, 350, 428.5, 28.5,      // legs
+    350, 100, 40, 350, 428.5, 28.5,      // legs
+    200, 100, 120,                   // waist
     40, 40, 40, 40,  40, 40, 40,  // arms
     40, 40, 40, 40,  40, 40, 40   // arms
 };
 
 // Damping for all G1 Joints
 inline const std::array<float, G1_NUM_MOTOR> Kd{
-    12.5, 6.3, 2.5, 16.3, 10.81, 1.81,     // legs
-    12.5, 6.3, 2.5, 16.3, 10.81, 1.81,     // legs
-    1, 1, 1,              // waist
+    12.5, 6.3, 2.5, 16.3, 12.81, 1.81,     // legs
+    12.5, 6.3, 2.5, 16.3, 12.81, 1.81,     // legs
+    12.5, 6.3, 6.3,              // waist
     1, 1, 1, 1, 1, 1, 1,  // arms
     1, 1, 1, 1, 1, 1, 1   // arms
 };

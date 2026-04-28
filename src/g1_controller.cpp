@@ -218,12 +218,14 @@ void G1Controller::Compute() {
         dds_low_command.motor_cmd().at(i).kd() = Kd[i];
     }
     // Keep a symmetric, slightly bent lower-body posture.
-    dds_low_command.motor_cmd().at(LeftHipPitch).q() = -0.5f;
-    dds_low_command.motor_cmd().at(LeftKnee).q() = 1.0f;
-    dds_low_command.motor_cmd().at(LeftAnklePitch).q() = -0.5f;
-    dds_low_command.motor_cmd().at(RightHipPitch).q() = -0.5f;
-    dds_low_command.motor_cmd().at(RightKnee).q() = 1.0f;
-    dds_low_command.motor_cmd().at(RightAnklePitch).q() = -0.5f;
+    dds_low_command.motor_cmd().at(LeftHipPitch).q() = -0.2f;
+    dds_low_command.motor_cmd().at(LeftKnee).q() = 0.5f;
+    dds_low_command.motor_cmd().at(LeftAnklePitch).q() = -0.3f;
+    dds_low_command.motor_cmd().at(RightHipPitch).q() = -0.2f;
+    dds_low_command.motor_cmd().at(RightKnee).q() = 0.5f;
+    dds_low_command.motor_cmd().at(RightAnklePitch).q() = -0.3f;
+    dds_low_command.motor_cmd().at(LeftShoulderPitch).q() = 0.7f;
+    dds_low_command.motor_cmd().at(RightShoulderPitch).q() = 0.7f;
 
     dds_low_command.crc() = Crc32Core((uint32_t *)&dds_low_command, (sizeof(dds_low_command) >> 2) - 1);
     motor_cmd_publisher_->Write(dds_low_command);
