@@ -9,7 +9,9 @@
 #include "g1_gui/joint_names.hpp"
 
 #include <unitree/idl/hg/LowState_.hpp>
+#include <unitree/idl/ros2/String_.hpp>
 #include <unitree/robot/channel/channel_factory.hpp>
+#include <unitree/robot/channel/channel_publisher.hpp>
 #include <unitree/robot/channel/channel_subscriber.hpp>
 
 using namespace unitree::common;
@@ -17,6 +19,7 @@ using namespace unitree::robot;
 using namespace unitree_hg::msg::dds_;
 
 static const std::string kHgStateTopic = "rt/lowstate";
+static const std::string kCustomCtrlCmdTopic = "rt/custom_controller_cmd";
 static constexpr double kLowStateTickDtSec = 0.001;  // 500 Hz lowstate
 
 inline uint32_t Crc32Core(uint32_t *ptr, uint32_t len) {
@@ -55,6 +58,7 @@ struct JointSnapshot {
 struct App {
   mg_mgr mgr{};
   std::string web_root;
+  ChannelPublisherPtr<std_msgs::msg::dds_::String_> custom_ctrl_cmd_pub;
   std::mutex snap_mu;
   JointSnapshot snap;
   std::atomic<bool> tick_origin_initialized{false};
@@ -133,7 +137,15 @@ static void http_event(struct mg_connection *c, int ev, void *ev_data) {
     opts.root_dir = app->web_root.c_str();
     mg_http_serve_dir(c, hm, &opts);
   } else if (ev == MG_EV_WS_MSG) {
-    (void)ev_data;
+    auto *wm = static_cast<struct mg_ws_message *>(ev_data);
+    const std::string ws_text(wm->data.buf, wm->data.len);
+    if (ws_text == "custom_controller_start" && app->custom_ctrl_cmd_pub) {
+      std_msgs::msg::dds_::String_ cmd_msg;
+      cmd_msg.data() = "custom_controller_start";
+      app->custom_ctrl_cmd_pub->Write(cmd_msg);
+      static constexpr const char kAck[] = "{\"type\":\"ack\",\"cmd\":\"custom_controller_start\"}";
+      mg_ws_send(c, kAck, sizeof(kAck) - 1, WEBSOCKET_OP_TEXT);
+    }
   }
 }
 
@@ -192,6 +204,9 @@ int main(int argc, char **argv) {
 
   App app;
   app.web_root = G1_GUI_WEB_ROOT;
+  app.custom_ctrl_cmd_pub.reset(
+      new ChannelPublisher<std_msgs::msg::dds_::String_>(kCustomCtrlCmdTopic));
+  app.custom_ctrl_cmd_pub->InitChannel();
 
   mg_mgr_init(&app.mgr);
   app.mgr.userdata = &app;

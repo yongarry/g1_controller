@@ -13,3 +13,6 @@ find_package(pinocchio REQUIRED)
 add_executable(g1_ctl src/main.cpp src/g1_controller.cpp)
 target_include_directories(g1_ctl PRIVATE include)
 target_link_libraries(g1_ctl unitree_sdk2 pinocchio::pinocchio)
+
+add_executable(g1_state_estimator src/state_estimator.cpp)
+target_link_libraries(g1_state_estimator unitree_sdk2)

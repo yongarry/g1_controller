@@ -30,11 +30,13 @@
 #include <unitree/idl/hg/IMUState_.hpp>
 #include <unitree/idl/hg/LowCmd_.hpp>
 #include <unitree/idl/hg/LowState_.hpp>
+#include <unitree/idl/ros2/String_.hpp>
 #include <unitree/robot/b2/motion_switcher/motion_switcher_client.hpp>
 
 inline const std::string HG_CMD_TOPIC = "rt/lowcmd";
 inline const std::string HG_IMU_TORSO = "rt/secondary_imu";
 inline const std::string HG_STATE_TOPIC = "rt/lowstate";
+inline const std::string HG_CUSTOM_CTRL_CMD_TOPIC = "rt/custom_controller_cmd";
 
 using namespace unitree::common;
 using namespace unitree::robot;
@@ -162,6 +164,7 @@ public:
 
     void imuDataHandler(const void *message);
     void robotDataHandler(const void *message);
+    void customCtrlCmdHandler(const void *message);
     void Compute();
 
 private:
@@ -185,6 +188,7 @@ private:
     ChannelPublisherPtr<LowCmd_> motor_cmd_publisher_;
     ChannelSubscriberPtr<LowState_> motor_state_subscriber_;
     ChannelSubscriberPtr<IMUState_> imu_state_subscriber_;
+    ChannelSubscriberPtr<std_msgs::msg::dds_::String_> custom_ctrl_cmd_subscriber_;
     ThreadPtr compute_thread_ptr_;
   
     std::shared_ptr<unitree::robot::b2::MotionSwitcherClient> msc_;

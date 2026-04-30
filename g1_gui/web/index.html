@@ -80,6 +80,21 @@
     .pill.ok { color: var(--ok); border-color: rgba(52,211,153,0.3); }
     .pill.ok .dot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
     .pill.bad { color: var(--bad); border-color: rgba(248,113,113,0.3); }
+    .action-btn {
+      padding: 0.35rem 0.8rem;
+      border-radius: 8px;
+      border: 1px solid rgba(52,211,153,0.35);
+      background: rgba(52,211,153,0.14);
+      color: #b8ffe2;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .action-btn:hover {
+      background: rgba(52,211,153,0.22);
+      border-color: rgba(52,211,153,0.6);
+    }
 
     /* ── IMU cards ──────────────────────────── */
     .imu-row {
@@ -231,6 +246,7 @@
       <h1>G1 Joint State Monitor</h1>
     </div>
     <span id="conn" class="pill bad"><span class="dot"></span>Disconnected</span>
+    <button id="custom-start-btn" class="action-btn" type="button">Custom Controller Start</button>
   </header>
 
   <div class="imu-row">
@@ -336,6 +352,8 @@
     const yawEl   = document.getElementById("imu-yaw");
     const modeEl  = document.getElementById("mode-machine");
     const elapsedEl = document.getElementById("elapsed-s");
+    const customStartBtn = document.getElementById("custom-start-btn");
+    let wsRef = null;
 
     function fmt(v, d) { return Number(v).toFixed(d ?? 4); }
 
@@ -360,6 +378,7 @@
 
     function connect() {
       const ws = new WebSocket(wsUrl);
+      wsRef = ws;
       ws.onopen = () => {
         connEl.textContent = "● Connected";
         connEl.className = "pill ok";
@@ -378,6 +397,11 @@
       };
     }
     connect();
+
+    customStartBtn.addEventListener("click", () => {
+      if (!wsRef || wsRef.readyState !== WebSocket.OPEN) return;
+      wsRef.send("custom_controller_start");
+    });
   </script>
 </body>
 </html>

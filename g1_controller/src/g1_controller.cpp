@@ -52,6 +52,8 @@ G1Controller::G1Controller(std::string networkInterface)
     motor_state_subscriber_->InitChannel(std::bind(&G1Controller::robotDataHandler, this, std::placeholders::_1), 1);
     imu_state_subscriber_.reset(new ChannelSubscriber<IMUState_>(HG_IMU_TORSO));
     imu_state_subscriber_->InitChannel(std::bind(&G1Controller::imuDataHandler, this, std::placeholders::_1), 1);
+    custom_ctrl_cmd_subscriber_.reset(new ChannelSubscriber<std_msgs::msg::dds_::String_>(HG_CUSTOM_CTRL_CMD_TOPIC));
+    custom_ctrl_cmd_subscriber_->InitChannel(std::bind(&G1Controller::customCtrlCmdHandler, this, std::placeholders::_1), 1);
     // create threads
     compute_thread_ptr_ = CreateRecurrentThreadEx("compute", 11, control_us_, &G1Controller::Compute, this);
 
@@ -146,16 +148,11 @@ void G1Controller::logFramePoseAndJacobian(const std::string &frame_name,
     pinocchio::computeFrameJacobian(pin_model_, *pin_data_, pin_q_, frame_id,
                                     pinocchio::ReferenceFrame::LOCAL_WORLD_ALIGNED,
                                     jacobian_buffer);
-    // std::cout << "[Pinocchio] " << frame_name
-    //           << " Jacobian(translation):\n"
-    //           << jacobian_buffer.topRows(3) << std::endl;
 }
 
 void G1Controller::imuDataHandler(const void *message) {
     IMUState_ imu_torso = *(const IMUState_ *)message;
     auto &rpy = imu_torso.rpy();
-    // if (counter_ % 500 == 0)
-    //   printf("IMU.torso.rpy: %.2f %.2f %.2f\n", rpy[0], rpy[1], rpy[2]);
 }
 
 void G1Controller::robotDataHandler(const void *message) {
@@ -185,6 +182,13 @@ void G1Controller::robotDataHandler(const void *message) {
     if (mode_machine_ != low_state.mode_machine()) {
       if (mode_machine_ == 0) std::cout << "G1 type: " << unsigned(low_state.mode_machine()) << std::endl;
       mode_machine_ = low_state.mode_machine();
+    }
+}
+
+void G1Controller::customCtrlCmdHandler(const void *message) {
+    const auto cmd = *static_cast<const std_msgs::msg::dds_::String_ *>(message);
+    if (cmd.data() == "custom_controller_start") {
+      std::cout << "custom controller start!" << std::endl;
     }
 }
 
