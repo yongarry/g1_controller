@@ -111,7 +111,21 @@ public:
     }
 };
 
+// Lower-body joint position action. On hardware the action manager only owns
+// the 12 leg joints (joint_ids_map). The upper-body joints are held at their
+// defaults by State_Footstep, mirroring LowerJointPositionAction.apply_actions
+// in training (which appends the default upper-body targets).
+class LowerJointPositionAction : public JointPositionAction
+{
+public:
+    LowerJointPositionAction(YAML::Node cfg, ManagerBasedRLEnv* env)
+    :JointPositionAction(cfg, env)
+    {
+    }
+};
+
 REGISTER_ACTION(JointPositionAction);
 REGISTER_ACTION(JointVelocityAction);
+REGISTER_ACTION(LowerJointPositionAction);
 
 };

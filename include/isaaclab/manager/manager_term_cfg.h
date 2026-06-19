@@ -22,11 +22,17 @@ struct ObservationTermCfg
     std::vector<float> clip;
     std::vector<float> scale;
     int history_length = 1;
+    // Down-samples the history buffer: keeps `history_length` frames spaced
+    // `skip_history_tick` ticks apart (matches DyrosObservationManager).
+    int skip_history_tick = 1;
     bool scale_first = false;
+
+    int max_length() const { return history_length * std::max(1, skip_history_tick); }
 
     void reset(std::vector<float> obs)
     {
-        for(int i(0); i < history_length; ++i) add(obs);
+        buff_.clear();
+        for(int i(0); i < max_length(); ++i) add(obs);
     }
 
     void add(std::vector<float> obs)
@@ -47,10 +53,17 @@ struct ObservationTermCfg
         }
         buff_.push_back(obs);
 
-        if (buff_.size() > history_length) buff_.pop_front();
+        if ((int)buff_.size() > max_length()) buff_.pop_front();
     }
 
-    const std::vector<float> & get(int n) const { return buff_[n]; }
+    // Returns the h-th history frame (h in [0, history_length)), oldest first,
+    // selecting every `skip_history_tick`-th frame aligned to the newest entry.
+    const std::vector<float> & get(int h) const
+    {
+        const int skip = std::max(1, skip_history_tick);
+        const int idx = ((int)buff_.size() - 1) - (history_length - 1 - h) * skip;
+        return buff_[std::clamp(idx, 0, (int)buff_.size() - 1)];
+    }
 
     const std::vector<float> get() const
     {

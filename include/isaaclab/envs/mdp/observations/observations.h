@@ -108,6 +108,31 @@ REGISTER_OBSERVATION(last_action)
     return std::vector<float>(data.data(), data.data() + data.size());
 };
 
+// Robot data joints are stored in policy (joint_ids_map) order already, so the
+// "ordered" relative position is simply joint_pos - default_joint_pos.
+REGISTER_OBSERVATION(joint_pos_ordered_rel)
+{
+    auto & asset = env->robot;
+    std::vector<float> data(asset->data.joint_pos.size());
+    for(size_t i = 0; i < data.size(); ++i)
+        data[i] = asset->data.joint_pos[i] - asset->data.default_joint_pos[i];
+    return data;
+}
+
+REGISTER_OBSERVATION(joint_vel_ordered)
+{
+    auto & asset = env->robot;
+    auto & v = asset->data.joint_vel;
+    return std::vector<float>(v.data(), v.data() + v.size());
+}
+
+// Processed action (joint position targets) of the (single) action term.
+REGISTER_OBSERVATION(last_processed_action)
+{
+    auto data = env->action_manager->processed_actions();
+    return std::vector<float>(data.data(), data.data() + data.size());
+};
+
 REGISTER_OBSERVATION(velocity_commands)
 {
     std::vector<float> obs(3);

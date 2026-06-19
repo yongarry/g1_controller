@@ -7,6 +7,9 @@ FSM:
     Velocity:
       id: 3
       type: RLBase
+    Footstep:
+      id: 4
+      type: Footstep
 
     Mimic_Dance_102: # uncomment to enable
       id: 101
@@ -33,12 +36,13 @@ FSM:
       3,3,3,3,3,3,3,  
     ]
   FixStand:
-    transitions: 
+    transitions:
       Passive: LT + B.on_pressed
       Velocity: RB + X.on_pressed
+      Footstep: RB + Y.on_pressed
     kp: [
-      100., 100., 100., 150., 40., 40.,
-      100., 100., 100., 150., 40., 40.,
+      200., 100., 100., 350., 340., 40.,
+      200., 100., 100., 350., 340., 40.,
       200,200,200,
       40,40,40,40,40,40,40,
       40,40,40,40,40,40,40,
@@ -53,21 +57,27 @@ FSM:
     ts: [0, 3]
     qs: [
       [],
-      [ -0.1, 0,0,0.3,-0.2,0,
-        -0.1, 0,0,0.3,-0.2,0,
+      [ -0.2, 0,0,0.5,-0.3,0,
+        -0.2, 0,0,0.5,-0.3,0,
         0,0,0,
-        0, 0.25,0,0.97,0.15, 0,0,
-        0, -0.25,0,0.97,-0.15, 0,0
+        0.1, 0.2,0,1.1,0,0,0,
+        0.1,-0.2,0,1.1,0,0,0
       ]
     ]
   Velocity:
-    transitions: 
+    transitions:
       Passive: LT + B.on_pressed
+      Footstep: RB + Y.on_pressed
       Mimic_Dance_102: LT(2s) + down.on_pressed
       Mimic_Gangnam_Style: LT(2s) + right.on_pressed
 
     policy_dir: config/policy/velocity
     # policy_dir: ../../../logs/rsl_rl/unitree_g1_29dof_velocity
+  Footstep:
+    transitions:
+      Passive: LT + B.on_pressed
+      Velocity: RB + X.on_pressed
+    policy_dir: config/policy/footstep
   Mimic_Dance_102:
     transitions: 
       Passive: LT + B.on_pressed

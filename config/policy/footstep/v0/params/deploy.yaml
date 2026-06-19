@@ -1,0 +1,135 @@
+# Deploy configuration for the G1-2d footstep policy (G12DFootEnvCfg).
+#
+# The lower-body (12 leg joints, policy order == SDK 0..11) are driven by the
+# action manager. The upper body is held at default by State_Footstep.
+#
+# Regenerate with:
+#   isaaclab_dyros/scripts/rsl_rl/export_footstep_deploy.py
+
+# --- lower body (action manager) ---
+joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+step_dt: 0.02
+stiffness: [100.0, 100.0, 100.0, 150.0, 40.0, 40.0,
+            100.0, 100.0, 100.0, 150.0, 40.0, 40.0]
+damping: [2.0, 2.0, 2.0, 4.0, 2.0, 2.0,
+          2.0, 2.0, 2.0, 4.0, 2.0, 2.0]
+default_joint_pos: [-0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
+                    -0.2, 0.0, 0.0, 0.5, -0.3, 0.0]
+
+# --- upper body (held at default by State_Footstep), SDK indices 12..28 ---
+upper_body:
+  joint_ids_map: [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+  default_joint_pos: [0.0, 0.0, 0.0,
+                      0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
+                      0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
+  stiffness: [200.0, 200.0, 200.0,
+              40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0,
+              40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
+  damping: [5.0, 5.0, 5.0,
+            10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0,
+            10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
+
+actions:
+  LowerJointPositionAction:
+    joint_ids: null
+    clip: null
+    scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    offset: [-0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
+             -0.2, 0.0, 0.0, 0.5, -0.3, 0.0]
+
+# Observation order must match G12DFootEnvCfg.ObservationsCfg.PolicyCfg exactly.
+# The whole group uses history_length=10, skip_history_tick=2 (history-major).
+observations:
+  base_ang_vel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  use_gym_history: true
+  projected_gravity:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_pos_ordered_rel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_vel_ordered:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_ik_target:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  phase:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  foot_commands_2d:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  last_processed_action:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+
+# --- footstep command generator (OnlineFootCommand) ---
+footstep:
+  future_foot_step_num: 2
+  vrp_height: 0.6607
+  pelv_com_offset: 0.0761
+  vrp_horizon_length: 5.0
+  preview_horizon_length: 2.0
+  swing_up_timing: 0.4
+  swing_down_timing: 0.5
+  ik_iters: 50
+  ik_lambda: 0.05
+  ik_pos_tol: 0.0001
+  urdf_path: config/urdf/g1_29dof.urdf
+  base_link: pelvis
+  lleg_joints: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint,
+                left_knee_joint, left_ankle_pitch_joint, left_ankle_roll_joint]
+  rleg_joints: [right_hip_pitch_joint, right_hip_roll_joint, right_hip_yaw_joint,
+                right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint]
+  lee_name: left_ankle_roll_link
+  ree_name: right_ankle_roll_link
+  start_phase_indicator: 0   # 0: right foot swings first (ignored in csv mode; taken from first row)
+
+  # Foot-command source: "joystick" (default, original behavior) or "csv".
+  command_source: csv # csv
+  # CSV played back when command_source == csv (relative to the project dir).
+  csv_path: config/footcommands.csv
+  ranges:
+    foot_pos_x: [-0.2, 0.2]
+    foot_pos_y: [0.2, 0.4]
+    foot_rot_y: [-0.2, 0.2]
+    foot_ssp_time: [0.5, 1.0]
+    foot_dsp_time: [0.0, 0.3]
+    foot_height: [0.05, 0.10]
+  default_input:
+    step_y: 0.237
+    ssp_t: 0.75
+    dsp_t: 0.15
+    height: 0.075
+    com_z: 0.0
+  joystick:
+    x_scale: 0.2
+    y_scale: 0.1
+    yaw_scale: 0.2

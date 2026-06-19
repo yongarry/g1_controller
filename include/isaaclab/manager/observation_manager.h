@@ -129,6 +129,7 @@ protected:
             term_cfg.params = term_yaml_cfg["params"];
             term_cfg.scale_first = scale_first;
             term_cfg.history_length = term_yaml_cfg["history_length"].as<int>(1);
+            term_cfg.skip_history_tick = term_yaml_cfg["skip_history_tick"].as<int>(1);
 
             auto term_name = it->first.as<std::string>();
             if(observations_map()[term_name] == nullptr) {

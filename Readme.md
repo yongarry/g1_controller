@@ -45,6 +45,16 @@ Install the system dependencies used by the deploy controller:
 sudo apt install -y libyaml-cpp-dev libboost-all-dev libeigen3-dev libspdlog-dev libfmt-dev
 ```
 
+The footstep controller (`State_Footstep`) additionally needs
+[Pinocchio](https://github.com/stack-of-tasks/pinocchio) for full-body forward
+kinematics, CoM and Jacobians:
+
+```bash
+# robotpkg (recommended) — see install.pinocchio.org, then:
+sudo apt install -y robotpkg-py3*-pinocchio
+# or conda:  conda install pinocchio -c conda-forge
+```
+
 Install `unitree_sdk2` system-wide:
 
 ```bash
@@ -150,6 +160,62 @@ MyPolicy:
 If the policy requires custom observations, actions, reset behavior, or transition
 checks, add a dedicated state implementation under `src/` and register it with the
 FSM system.
+
+## Footstep Policy (G1-2d)
+
+`State_Footstep` deploys the `G12DFootEnvCfg` (`G1-2d`) footstep policy trained in
+`isaaclab_dyros`. Unlike the velocity/mimic states, it reproduces the training-time
+`OnlineFootCommand` on-device: an operator-driven foot-step planner feeds a VRP
+generator + ZMP preview controller, whose CoM/foot reference is solved with a
+Pinocchio differential IK to produce the `joint_ik_target`, `phase` and
+`foot_commands_2d` observations the policy consumes. The policy outputs the 12
+lower-body joint targets; the upper body is held at its defaults.
+
+Layout:
+
+```text
+config/policy/footstep/v0/
+├── params/deploy.yaml      # joints, gains, obs layout, command/IK/preview params
+└── exported/policy.onnx    # exported actor (place your trained policy here)
+config/urdf/g1_29dof.urdf   # model used by Pinocchio for FK / IK
+```
+
+Generate `policy.onnx` + `deploy.yaml` from a trained checkpoint:
+
+```bash
+# in the isaaclab_dyros workspace
+./isaaclab.sh -p scripts/rsl_rl/export_footstep_deploy.py \
+    --task G1-2d-Play --checkpoint logs/rsl_rl/<exp>/<run>/model_<n>.pt \
+    --out_dir <repo>/g1_controller/config/policy/footstep/v0
+```
+
+FSM flow (see `config/config.yaml`):
+
+```text
+Passive --[LT+Up]--> FixStand --[RB+Y]--> Footstep
+                     FixStand --[RB+X]--> Velocity --[RB+Y]--> Footstep
+Footstep --[LT+B]--> Passive ,  Footstep --[RB+X]--> Velocity
+```
+
+In `Footstep`, the left stick commands forward step length (`ly`) and step-width
+trim (`lx`); the right stick (`rx`) commands per-step turning. Nominal step width,
+support/swing times and apex height come from `footstep.default_input` in
+`deploy.yaml`, and all operator inputs are clamped to the trained `ranges`.
+
+### Deployment notes / assumptions
+
+* Single robot (`num_envs == 1`); the batched training tensors are reduced to
+  Eigen per-step math.
+* No floating-base state estimator is assumed: the pelvis is treated as fixed when
+  computing CoM/foot velocities (linear & angular base velocity = 0). The planted
+  stance foot makes this a good approximation for the quantities the command
+  generator uses. If a base-velocity estimate is available it can be wired into
+  `Kinematics`/`FootstepCommand` to improve fidelity.
+* The "global" command frame is re-anchored at the pelvis each control tick; this
+  is valid because all cross-tick state lives in relative (stance-foot / command)
+  frames.
+* Start on a flat floor with the robot already balanced (enter from `FixStand`).
+  Validate first in sim2sim / loopback DDS (`--network lo`) before the real robot.
 
 ## Acknowledgements
 
