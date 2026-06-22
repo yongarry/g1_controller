@@ -133,16 +133,61 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         joy_yaw_scale_ = yaml_get(js, "yaw_scale", joy_yaw_scale_);
     }
 
-    // ---- foot-command source (joystick by default, or csv) ----
-    command_source_ = isaaclab::make_foot_command_source(
-        fs, param::proj_dir, &FSMState::lowstate->joystick,
-        default_input_, joy_x_scale_, joy_y_scale_, joy_yaw_scale_, default_start_phase);
-    // CSV may impose the starting swing foot; honor it so phase alternation aligns.
-    fcfg.start_phase_indicator = command_source_->start_phase_indicator();
+    // ---- foot-command source ----
+    // "csv_global": follow absolute world-frame foot targets (footcommands_global.csv);
+    // the planner recomputes the local command from the accumulated stance foot each step.
+    // Otherwise: per-tick local input from joystick (default) or csv.
+    std::string src = fs["command_source"] ? fs["command_source"].as<std::string>() : "joystick";
+    std::transform(src.begin(), src.end(), src.begin(), [](unsigned char c){ return std::tolower(c); });
 
-    command_ = std::make_unique<isaaclab::FootstepCommand>(fcfg, kin_);
-    State_Footstep::command = command_.get(); // visible to obs terms before env build
-    command_->set_input(command_source_->input());
+    if (src == "csv_global")
+    {
+        std::filesystem::path csv = fs["global_csv_path"] ? fs["global_csv_path"].as<std::string>()
+                                                          : std::string("config/footcommands_global.csv");
+        if (csv.is_relative()) csv = param::proj_dir / csv;
+
+        isaaclab::GlobalFootTarget gdef;
+        gdef.ssp_t = default_input_.ssp_t;
+        gdef.dsp_t = default_input_.dsp_t;
+        gdef.height = default_input_.height;
+        gdef.com_z = default_input_.com_z;
+        auto plan = isaaclab::load_global_foot_plan(csv.string(), gdef);
+
+        fcfg.start_phase_indicator = plan.front().phase;
+
+        // Anchor of the global plan frame: world pose of the initial stance foot
+        // (the foot NOT swinging first). Must match the frame the plan CSV was
+        // generated in (cmd/convert_footcommand_2_global.py). Defaults to the G1
+        // spawn-keyframe foot poses.
+        auto foot_pose = [&](const std::string& key, std::array<float, 4> def) -> isaaclab::WorldPose {
+            std::array<float, 4> v = def;
+            if (fs[key]) { auto n = fs[key].as<std::vector<float>>(); for (int i = 0; i < 4 && i < (int)n.size(); ++i) v[i] = n[i]; }
+            return isaaclab::WorldPose{v[0], v[1], v[2], v[3]};
+        };
+        const isaaclab::WorldPose lfoot = foot_pose("global_init_lfoot", {-0.02179f,  0.118506f, 0.0f, 0.0f});
+        const isaaclab::WorldPose rfoot = foot_pose("global_init_rfoot", {-0.02179f, -0.118506f, 0.0f, 0.0f});
+        // start phase 0 => right foot swings first => left foot is the initial stance.
+        const isaaclab::WorldPose init_stance = (plan.front().phase == 0) ? lfoot : rfoot;
+
+        command_ = std::make_unique<isaaclab::FootstepCommand>(fcfg, kin_);
+        command_->set_global_plan(std::move(plan), init_stance);
+        State_Footstep::command = command_.get(); // visible to obs terms before env build
+        spdlog::info("[FootCommand] command_source = csv_global (init stance x={:.4f} y={:.4f} z={:.4f} yaw={:.4f})",
+                     init_stance.x, init_stance.y, init_stance.z, init_stance.yaw);
+        // command_source_ stays null: the global plan drives the planner internally.
+    }
+    else
+    {
+        command_source_ = isaaclab::make_foot_command_source(
+            fs, param::proj_dir, &FSMState::lowstate->joystick,
+            default_input_, joy_x_scale_, joy_y_scale_, joy_yaw_scale_, default_start_phase);
+        // CSV may impose the starting swing foot; honor it so phase alternation aligns.
+        fcfg.start_phase_indicator = command_source_->start_phase_indicator();
+
+        command_ = std::make_unique<isaaclab::FootstepCommand>(fcfg, kin_);
+        State_Footstep::command = command_.get(); // visible to obs terms before env build
+        command_->set_input(command_source_->input());
+    }
 
     // ---- env (policy + managers) ----
     auto articulation = std::make_shared<unitree::BaseArticulation<LowState_t::SharedPtr>>(FSMState::lowstate);
@@ -207,7 +252,7 @@ void State_Footstep::enter()
         load_full_state(q, qd);
         kin_->set_state(q, qd);
         command_->robot_quat_w_ = env->robot->data.root_quat_w;
-        command_->set_input(command_source_->input());
+        if (command_source_) command_->set_input(command_source_->input());
         command_->reset();
         env->reset();
 
@@ -217,10 +262,10 @@ void State_Footstep::enter()
             load_full_state(q, qd);
             kin_->set_state(q, qd);
             command_->robot_quat_w_ = env->robot->data.root_quat_w;
-            command_->set_input(command_source_->input());
+            if (command_source_) command_->set_input(command_source_->input());
             command_->compute();
             // advance the (csv) command source when a footstep completes
-            if (command_->step_completed()) command_source_->advance();
+            if (command_source_ && command_->step_completed()) command_source_->advance();
             env->step();
 
             std::this_thread::sleep_until(sleepTill);

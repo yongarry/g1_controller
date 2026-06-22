@@ -48,6 +48,25 @@ struct FootCommandInput
     float com_z = 0.0f;    // com height offset [m]
 };
 
+// Absolute (world-frame) foot-step target used by the "global" command mode.
+// One entry per planned footstep: the SWING foot's landing pose plus the same
+// timing/height/com fields carried by FootCommandInput. Positions are expressed
+// in the initial-stance-foot frame (the first stance foot is the world origin),
+// so the planner accumulates the achieved stance pose and recomputes the local
+// command from the measured stance foot to the indexed target every step.
+struct GlobalFootTarget
+{
+    float x = 0.0f;      // world swing-landing x [m]
+    float y = 0.0f;      // world swing-landing y [m]
+    float z = 0.0f;      // world swing-landing z [m]
+    float yaw = 0.0f;    // world swing-landing yaw [rad]
+    float ssp_t = 0.75f; // single support time [s]
+    float dsp_t = 0.15f; // double support time [s]
+    float height = 0.075f; // swing apex height [m]
+    float com_z = 0.0f;  // com height offset [m]
+    int phase = 0;       // 0: right foot swings, 1: left foot swings
+};
+
 // ---------------------------------------------------------------------------
 // Interface
 // ---------------------------------------------------------------------------
@@ -256,6 +275,100 @@ private:
     int start_phase_ = 0;
     bool end_logged_ = false;
 };
+
+// ---------------------------------------------------------------------------
+// Global-plan loader (footcommands_global.csv)
+//
+// Reads a per-row CSV of absolute (world-frame) swing-foot landing targets:
+//   foot,pos_x,pos_y,pos_z,yaw,ssp_t,dsp_t,height[,com_z]
+// `foot` (L/R) sets the swing phase per step (matches the local CSV). The
+// returned plan is consumed by FootstepCommand in "global" command mode.
+// ---------------------------------------------------------------------------
+inline std::vector<GlobalFootTarget> load_global_foot_plan(const std::string& path,
+                                                           const GlobalFootTarget& def = GlobalFootTarget{})
+{
+    auto trim = [](std::string s) {
+        auto notspace = [](int c){ return !std::isspace(c); };
+        s.erase(s.begin(), std::find_if(s.begin(), s.end(), notspace));
+        s.erase(std::find_if(s.rbegin(), s.rend(), notspace).base(), s.end());
+        return s;
+    };
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
+        return s;
+    };
+    auto split = [&](const std::string& line) {
+        std::vector<std::string> out;
+        std::stringstream ss(line);
+        std::string cell;
+        while (std::getline(ss, cell, ',')) out.push_back(trim(cell));
+        return out;
+    };
+
+    if (!std::filesystem::exists(path))
+        throw std::runtime_error("load_global_foot_plan: file not found: " + path);
+    std::ifstream f(path);
+    if (!f.is_open())
+        throw std::runtime_error("load_global_foot_plan: cannot open file: " + path);
+
+    std::string line;
+    if (!std::getline(f, line))
+        throw std::runtime_error("load_global_foot_plan: empty file: " + path);
+    std::vector<std::string> header = split(line);
+    std::map<std::string, int> col;
+    for (int i = 0; i < (int)header.size(); ++i) col[lower(header[i])] = i;
+
+    const std::vector<std::string> required =
+        {"foot", "pos_x", "pos_y", "pos_z", "yaw", "ssp_t", "dsp_t", "height"};
+    for (const auto& c : required)
+        if (col.find(c) == col.end())
+            throw std::runtime_error("load_global_foot_plan: missing required column '" + c + "' in " + path);
+    const bool has_com_z = col.count("com_z");
+
+    std::vector<GlobalFootTarget> plan;
+    int line_no = 1;
+    while (std::getline(f, line))
+    {
+        ++line_no;
+        if (trim(line).empty()) continue;
+        std::vector<std::string> cells = split(line);
+        if ((int)cells.size() < (int)header.size())
+            throw std::runtime_error("load_global_foot_plan: too few columns at line " +
+                                     std::to_string(line_no) + " in " + path);
+
+        auto get_f = [&](const std::string& name) -> float {
+            try { return std::stof(cells[col[name]]); }
+            catch (const std::exception&) {
+                throw std::runtime_error("load_global_foot_plan: invalid value for '" + name +
+                                         "' at line " + std::to_string(line_no) + " in " + path);
+            }
+        };
+
+        const std::string foot = lower(cells[col["foot"]]);
+        GlobalFootTarget t = def;
+        if (foot == "r" || foot == "right") t.phase = 0;
+        else if (foot == "l" || foot == "left") t.phase = 1;
+        else throw std::runtime_error("load_global_foot_plan: invalid foot label '" +
+                                      cells[col["foot"]] + "' at line " + std::to_string(line_no) + " in " + path);
+
+        t.x = get_f("pos_x");
+        t.y = get_f("pos_y");
+        t.z = get_f("pos_z");
+        t.yaw = get_f("yaw");
+        t.ssp_t = get_f("ssp_t");
+        t.dsp_t = get_f("dsp_t");
+        t.height = get_f("height");
+        if (has_com_z) t.com_z = get_f("com_z");
+        plan.push_back(t);
+    }
+
+    if (plan.empty())
+        throw std::runtime_error("load_global_foot_plan: no data rows in " + path);
+
+    spdlog::info("[FootCommand/Global] loaded {} global foot targets from '{}' (start foot={})",
+                 plan.size(), path, plan.front().phase == 0 ? "R" : "L");
+    return plan;
+}
 
 // ---------------------------------------------------------------------------
 // Factory (selects the source from the deploy.yaml `footstep` node)

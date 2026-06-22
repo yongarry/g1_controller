@@ -44,6 +44,16 @@ struct FrameState
     math::Vec3 ang = math::Vec3::Zero();
 };
 
+// Planar (x, y, z, yaw) world pose used by the "global" command mode to track
+// the accumulated stance-foot pose across footsteps. See set_global_plan().
+struct WorldPose
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float yaw = 0.0f;
+};
+
 // FootCommandInput is defined in foot_command_source.h (shared with the
 // command-source abstraction).
 
@@ -88,6 +98,26 @@ public:
 
     // The operator updates this each tick; sampled at step boundaries.
     void set_input(const FootCommandInput& in) { input_ = in; }
+
+    // Enable "global" command mode: instead of per-tick local operator input,
+    // the planner follows a fixed list of absolute (world-frame) swing-foot
+    // targets. The world frame is anchored at the initial stance foot, and the
+    // achieved stance pose is accumulated from the measured swing-foot landing
+    // each step, so the local command for step 0 is recomputed from the current
+    // (drift-corrected) stance foot to the indexed global target.
+    // `init_stance` is the world pose of the initial stance foot, i.e. the
+    // anchor of the global plan frame. It MUST match the frame the plan CSV was
+    // generated in (see cmd/convert_footcommand_2_global.py), otherwise the
+    // recomputed local commands are offset by the spawn pose. Defaults to the
+    // origin (plan frame == initial-stance-foot frame).
+    void set_global_plan(std::vector<GlobalFootTarget> plan, WorldPose init_stance = WorldPose{})
+    {
+        global_plan_ = std::move(plan);
+        global_init_stance_ = init_stance;
+        global_mode_ = !global_plan_.empty();
+        if (global_mode_) cfg_.start_phase_indicator = global_plan_.front().phase;
+    }
+    bool global_mode() const { return global_mode_; }
 
     // --- public API mirroring CommandTerm ---
     void reset()
@@ -160,6 +190,7 @@ private:
 
     void resample_command_()
     {
+        if (global_mode_) { resample_command_global_(); return; }
         const int LA = cfg_.future_foot_step_num;
         walking_tick_ = 0;
         phase_indicator_[0] = cfg_.start_phase_indicator;
@@ -172,6 +203,7 @@ private:
 
     void update_command_()
     {
+        if (global_mode_) { update_command_global_(); return; }
         const int LA = cfg_.future_foot_step_num;
         walking_tick_ = 0;
         for (int s = 0; s < LA - 1; ++s) foot_command_[s] = foot_command_[s + 1];
@@ -181,6 +213,110 @@ private:
         time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
         foot_command_[LA - 1] = build_foot_command_(LA - 1);
         com_z_command_[LA] = input_.com_z;
+    }
+
+    // --- global command mode -------------------------------------------------
+    // Phase for the step at plan index `idx`. Feet strictly alternate, so the
+    // phase is fixed by the parity of `idx` relative to the start phase. This
+    // matches the plan's foot labels while it lasts and keeps alternating past
+    // the plan end (instead of getting stuck on one foot).
+    int phase_for_(int idx) const
+    {
+        const int start_phase = global_plan_.front().phase;
+        return (idx & 1) ? (1 - start_phase) : start_phase;
+    }
+
+    // Local 9-dim foot command for a swing from world pose `from` to target `tgt`.
+    std::array<float, 9> build_global_step_(const WorldPose& from, const GlobalFootTarget& tgt) const
+    {
+        std::array<float, 9> fc{};
+        const float c = std::cos(-from.yaw);
+        const float s = std::sin(-from.yaw);
+        const float dx = tgt.x - from.x;
+        const float dy = tgt.y - from.y;
+        fc[0] = c * dx - s * dy;
+        fc[1] = s * dx + c * dy;
+        fc[2] = tgt.z - from.z;
+        fc[3] = 0.0f;
+        fc[4] = 0.0f;
+        fc[5] = math::wrap_to_pi(tgt.yaw - from.yaw);
+        fc[6] = tgt.ssp_t;
+        fc[7] = tgt.dsp_t;
+        fc[8] = tgt.height;
+        return fc;
+    }
+
+    // In-place stand step used once the global plan is exhausted.
+    std::array<float, 9> default_global_step_(int phase) const
+    {
+        const float ssp = global_plan_.back().ssp_t;
+        const float dsp = global_plan_.back().dsp_t;
+        const float h = global_plan_.back().height;
+        std::array<float, 9> fc{0.0f, kInPlaceStepY_, 0.0f, 0.0f, 0.0f, 0.0f, ssp, dsp, h};
+        if (phase == 0) fc[1] *= -1.0f; // right swing places the foot on -y
+        return fc;
+    }
+
+    // World pose used as the swing origin for buffer slot `s` (>=1): the planned
+    // landing of the previous footstep, or the accumulated stance for s==0.
+    WorldPose plan_pose_(int idx) const
+    {
+        const GlobalFootTarget& t = global_plan_[std::min(idx, (int)global_plan_.size() - 1)];
+        return WorldPose{t.x, t.y, t.z, t.yaw};
+    }
+
+    void fill_global_buffer_()
+    {
+        const int LA = cfg_.future_foot_step_num;
+        for (int s = 0; s < LA; ++s)
+        {
+            const int idx = planner_index_ + s;
+            phase_indicator_[s] = phase_for_(idx);
+            if (idx < (int)global_plan_.size())
+            {
+                const WorldPose from = (s == 0) ? stance_world_ : plan_pose_(idx - 1);
+                foot_command_[s] = build_global_step_(from, global_plan_[idx]);
+                com_z_command_[s] = global_plan_[idx].com_z;
+            }
+            else
+            {
+                foot_command_[s] = default_global_step_(phase_indicator_[s]);
+                com_z_command_[s] = global_plan_.back().com_z;
+            }
+        }
+        com_z_command_[LA] = (planner_index_ + LA - 1 < (int)global_plan_.size())
+                                 ? global_plan_[planner_index_ + LA - 1].com_z
+                                 : global_plan_.back().com_z;
+        time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
+    }
+
+    void resample_command_global_()
+    {
+        walking_tick_ = 0;
+        planner_index_ = 0;
+        stance_world_ = global_init_stance_; // anchor of the global plan frame
+        fill_global_buffer_();
+    }
+
+    void update_command_global_()
+    {
+        walking_tick_ = 0;
+        // Accumulate the achieved stance pose: the foot that just swung (its
+        // landing measured relative to the old stance frame) becomes the new
+        // stance. This corrects drift between commanded and achieved steps.
+        const math::Vec3 sw = swing_foot_stance_pos_;
+        const float sw_yaw = math::wrap_to_pi(math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
+        const float c = std::cos(stance_world_.yaw);
+        const float s = std::sin(stance_world_.yaw);
+        WorldPose next;
+        next.x = stance_world_.x + c * sw[0] - s * sw[1];
+        next.y = stance_world_.y + s * sw[0] + c * sw[1];
+        next.z = stance_world_.z + sw[2];
+        next.yaw = math::wrap_to_pi(stance_world_.yaw + sw_yaw);
+        stance_world_ = next;
+
+        ++planner_index_; // past plan end, fill_global_buffer_ emits in-place steps
+        fill_global_buffer_();
     }
 
     void update_link_states_()
@@ -393,6 +529,14 @@ private:
     std::vector<std::array<float, 9>> foot_command_;
     std::vector<float> com_z_command_;
     std::vector<int> phase_indicator_;
+
+    // global command mode (absolute world-frame foot targets)
+    static constexpr float kInPlaceStepY_ = 0.237f; // nominal stance width
+    bool global_mode_ = false;
+    std::vector<GlobalFootTarget> global_plan_;
+    WorldPose global_init_stance_; // world pose of the initial stance foot (plan anchor)
+    int planner_index_ = 0;        // plan index of the step at buffer slot 0
+    WorldPose stance_world_;       // accumulated world pose of current stance foot
 
     // measured state (per tick)
     math::Vec3 com_pos_global_ = math::Vec3::Zero();

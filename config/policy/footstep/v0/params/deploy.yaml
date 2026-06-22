@@ -112,10 +112,24 @@ footstep:
   ree_name: right_ankle_roll_link
   start_phase_indicator: 0   # 0: right foot swings first (ignored in csv mode; taken from first row)
 
-  # Foot-command source: "joystick" (default, original behavior) or "csv".
-  command_source: csv # csv
-  # CSV played back when command_source == csv (relative to the project dir).
+  # Foot-command source:
+  #   "joystick"   - default, operator drives local per-step commands.
+  #   "csv"        - replay local per-step commands from csv_path.
+  #   "csv_global" - follow absolute world-frame foot targets from global_csv_path;
+  #                  the planner recomputes the local command from the accumulated
+  #                  stance foot to each target every step (drift-corrected).
+  command_source: csv_global # joystick | csv | csv_global
+  # Local per-step commands (command_source == csv), relative to the project dir.
   csv_path: config/footcommands.csv
+  # Absolute world-frame targets (command_source == csv_global), relative to the
+  # project dir. Generate from a local csv with cmd/convert_footcommand_2_global.py.
+  global_csv_path: config/footcommands_global.csv
+  # World pose [x, y, z, yaw] of each foot at spawn. The initial stance foot (the
+  # one NOT swinging first) anchors the global plan frame, so these MUST match the
+  # frame footcommands_global.csv was generated in (same values as the convert
+  # script's --init-*foot). Taken from the G1 footstep scene keyframe.
+  global_init_lfoot: [-0.02179,  0.118506, 0.0, 0.0]
+  global_init_rfoot: [-0.02179, -0.118506, 0.0, 0.0]
   ranges:
     foot_pos_x: [-0.2, 0.2]
     foot_pos_y: [0.2, 0.4]
