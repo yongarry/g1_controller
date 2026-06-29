@@ -16,6 +16,9 @@ damping: [2.0, 2.0, 2.0, 4.0, 2.0, 2.0,
 default_joint_pos: [-0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
                     -0.2, 0.0, 0.0, 0.5, -0.3, 0.0]
 
+# default_joint_pos: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
+                    # -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
+
 # --- upper body (held at default by State_Footstep), SDK indices 12..28 ---
 upper_body:
   joint_ids_map: [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
@@ -34,8 +37,10 @@ actions:
     joint_ids: null
     clip: null
     scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
-    offset: [-0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
-             -0.2, 0.0, 0.0, 0.5, -0.3, 0.0]
+    offset: [-0.3, 0.0, 0.0, 0.7, -0.4, 0.0,
+             -0.3, 0.0, 0.0, 0.7, -0.4, 0.0]
+    # offset: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
+            #  -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
 
 # Observation order must match G12DFootEnvCfg.ObservationsCfg.PolicyCfg exactly.
 # The whole group uses history_length=10, skip_history_tick=2 (history-major).
@@ -93,13 +98,17 @@ observations:
 # --- footstep command generator (OnlineFootCommand) ---
 footstep:
   future_foot_step_num: 2
-  vrp_height: 0.6607
-  pelv_com_offset: 0.0761
-  vrp_horizon_length: 5.0
-  preview_horizon_length: 2.0
+  # vrp_height: 0.6607
+  # pelv_com_offset: 0.0761
+  # vrp_height: 0.6258
+  # pelv_com_offset: 0.0278
+  vrp_height: 0.6457
+  pelv_com_offset: 0.0724
+  vrp_horizon_length: 4.0
+  preview_horizon_length: 1.6
   swing_up_timing: 0.4
   swing_down_timing: 0.5
-  ik_iters: 50
+  ik_iters: 5
   ik_lambda: 0.05
   ik_pos_tol: 0.0001
   urdf_path: config/urdf/g1_29dof.urdf
@@ -118,7 +127,7 @@ footstep:
   #   "csv_global" - follow absolute world-frame foot targets from global_csv_path;
   #                  the planner recomputes the local command from the accumulated
   #                  stance foot to each target every step (drift-corrected).
-  command_source: csv_global # joystick | csv | csv_global
+  command_source: joystick # joystick | csv | csv_global
   # Local per-step commands (command_source == csv), relative to the project dir.
   csv_path: config/footcommands.csv
   # Absolute world-frame targets (command_source == csv_global), relative to the
@@ -133,6 +142,7 @@ footstep:
   ranges:
     foot_pos_x: [-0.2, 0.2]
     foot_pos_y: [0.2, 0.4]
+    foot_pos_z: [0.0, 0.0]
     foot_rot_y: [-0.2, 0.2]
     foot_ssp_time: [0.5, 1.0]
     foot_dsp_time: [0.0, 0.3]

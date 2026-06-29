@@ -26,9 +26,9 @@ _PROJ_DIR = os.path.dirname(_THIS_DIR)
 DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 
 # Trained command ranges (must match footstep deploy.yaml `footstep.ranges`).
-RANGE_X = (0.1, 0.2)     # forward step length [m]
+RANGE_X = (0.2, 0.2)     # forward step length [m]
 RANGE_Y = (0.237, 0.237)      # lateral step width (positive magnitude) [m]
-RANGE_YAW = (0., 0.2)   # per-step turn [rad]
+RANGE_YAW = (0., 0.)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
 HEADER = ["foot", "step_x", "step_y", "step_yaw", "ssp_t", "dsp_t", "height"]
@@ -69,8 +69,8 @@ if __name__ == "__main__":
                    metavar=("MIN", "MAX"), help="step_y range [m]")
     p.add_argument("--yaw", nargs=2, type=float, default=list(RANGE_YAW),
                    metavar=("MIN", "MAX"), help="step_yaw range [rad]")
-    p.add_argument("--ssp", type=float, default=0.7, help="single support time [s]")
-    p.add_argument("--dsp", type=float, default=0.1, help="double support time [s]")
+    p.add_argument("--ssp", type=float, default=0.75, help="single support time [s]")
+    p.add_argument("--dsp", type=float, default=0.15, help="double support time [s]")
     p.add_argument("--height", type=float, default=0.075, help="swing apex height [m]")
     p.add_argument("--no-stop", action="store_true",
                    help="do not force the last step to be a stop step")

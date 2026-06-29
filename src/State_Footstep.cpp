@@ -37,6 +37,12 @@ REGISTER_OBSERVATION(foot_commands_2d)
     return std::vector<float>{c[14], c[15], c[19], c[20], c[21], c[22]};
 }
 
+REGISTER_OBSERVATION(foot_commands_3d)
+{
+    const auto& c = State_Footstep::command->command();
+    return std::vector<float>{c.begin() + 14, c.end()};
+}
+
 } // namespace mdp
 } // namespace isaaclab
 
