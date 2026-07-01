@@ -13,11 +13,11 @@ stiffness: [100.0, 100.0, 100.0, 150.0, 40.0, 40.0,
             100.0, 100.0, 100.0, 150.0, 40.0, 40.0]
 damping: [2.0, 2.0, 2.0, 4.0, 2.0, 2.0,
           2.0, 2.0, 2.0, 4.0, 2.0, 2.0]
-default_joint_pos: [-0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
-                    -0.2, 0.0, 0.0, 0.5, -0.3, 0.0]
+# default_joint_pos: [-0.3, 0.0, 0.0, 0.7, -0.4, 0.0,
+                    # -0.3, 0.0, 0.0, 0.7, -0.4, 0.0]
 
-# default_joint_pos: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
-                    # -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
+default_joint_pos: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
+                    -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
 
 # --- upper body (held at default by State_Footstep), SDK indices 12..28 ---
 upper_body:
@@ -37,10 +37,10 @@ actions:
     joint_ids: null
     clip: null
     scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
-    offset: [-0.3, 0.0, 0.0, 0.7, -0.4, 0.0,
-             -0.3, 0.0, 0.0, 0.7, -0.4, 0.0]
-    # offset: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
-            #  -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
+    # offset: [-0.3, 0.0, 0.0, 0.7, -0.4, 0.0,
+            #  -0.3, 0.0, 0.0, 0.7, -0.4, 0.0]
+    offset: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
+             -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
 
 # Observation order must match G12DFootEnvCfg.ObservationsCfg.PolicyCfg exactly.
 # The whole group uses history_length=10, skip_history_tick=2 (history-major).
@@ -82,7 +82,8 @@ observations:
     clip: null
     history_length: 10
     skip_history_tick: 2
-  foot_commands_2d:
+  # foot_commands_2d:
+  foot_commands_3d:
     params: {}
     scale: null
     clip: null
@@ -100,10 +101,10 @@ footstep:
   future_foot_step_num: 2
   # vrp_height: 0.6607
   # pelv_com_offset: 0.0761
-  # vrp_height: 0.6258
-  # pelv_com_offset: 0.0278
-  vrp_height: 0.6457
-  pelv_com_offset: 0.0724
+  vrp_height: 0.6258
+  pelv_com_offset: 0.0678
+  # vrp_height: 0.6457
+  # pelv_com_offset: 0.0724
   vrp_horizon_length: 4.0
   preview_horizon_length: 1.6
   swing_up_timing: 0.4
