@@ -98,6 +98,7 @@ observations:
 
 # --- footstep command generator (OnlineFootCommand) ---
 footstep:
+  log_file: log/footstep_log.txt   # 상대경로는 proj_dir 기준, ""로 두면 비활성화
   future_foot_step_num: 2
   # vrp_height: 0.6607
   # pelv_com_offset: 0.0761
@@ -107,9 +108,9 @@ footstep:
   # pelv_com_offset: 0.0724
   vrp_horizon_length: 4.0
   preview_horizon_length: 1.6
-  swing_up_timing: 0.4
-  swing_down_timing: 0.5
-  ik_iters: 5
+  swing_up_timing: 0.2
+  swing_down_timing: 0.6
+  ik_iters: 10
   ik_lambda: 0.05
   ik_pos_tol: 0.0001
   urdf_path: config/urdf/g1_29dof.urdf
@@ -122,13 +123,19 @@ footstep:
   ree_name: right_ankle_roll_link
   start_phase_indicator: 0   # 0: right foot swings first (ignored in csv mode; taken from first row)
 
+  # Foot world-position source (logging & global-plan stance tracking):
+  #   fk_odometry - FK landing accumulation (default, hardware)
+  #   sim_odom    - MuJoCo ground truth: rt/odommodestate base + FK foot offset
+  foot_state_source: sim_odom  # fk_odometry | sim_odom
+  sim_odom_topic: rt/odommodestate
+
   # Foot-command source:
   #   "joystick"   - default, operator drives local per-step commands.
   #   "csv"        - replay local per-step commands from csv_path.
   #   "csv_global" - follow absolute world-frame foot targets from global_csv_path;
   #                  the planner recomputes the local command from the accumulated
   #                  stance foot to each target every step (drift-corrected).
-  command_source: joystick # joystick | csv | csv_global
+  command_source: csv_global # joystick | csv | csv_global
   # Local per-step commands (command_source == csv), relative to the project dir.
   csv_path: config/footcommands.csv
   # Absolute world-frame targets (command_source == csv_global), relative to the
@@ -138,12 +145,13 @@ footstep:
   # one NOT swinging first) anchors the global plan frame, so these MUST match the
   # frame footcommands_global.csv was generated in (same values as the convert
   # script's --init-*foot). Taken from the G1 footstep scene keyframe.
-  global_init_lfoot: [-0.02179,  0.118506, 0.0, 0.0]
-  global_init_rfoot: [-0.02179, -0.118506, 0.0, 0.0]
+  # global_init_lfoot: [-0.02179,  0.118506, 0.0, 0.0]
+  global_init_lfoot: [-0.0,  0.1185, 0.0, 0.0]
+  global_init_rfoot: [-0.0, -0.1185, 0.0, 0.0]
   ranges:
     foot_pos_x: [-0.2, 0.2]
     foot_pos_y: [0.2, 0.4]
-    foot_pos_z: [0.0, 0.0]
+    foot_pos_z: [-0.15, 0.15]
     foot_rot_y: [-0.2, 0.2]
     foot_ssp_time: [0.5, 1.0]
     foot_dsp_time: [0.0, 0.3]

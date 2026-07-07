@@ -11,12 +11,14 @@
 
 set -uo pipefail
 
-# --- paths (edit here if your layout differs) ------------------------------
-MUJOCO_DIR="/home/yong/unitree_ws/unitree_mujoco/simulate/build"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- paths (relative to this script / g1_controller) ---------------------
+MUJOCO_DIR="$SCRIPT_DIR/../unitree_mujoco/simulate/build"
 MUJOCO_BIN="./unitree_mujoco"
-CTRL_DIR="/home/yong/unitree_ws/g1_controller/build"
+CTRL_DIR="$SCRIPT_DIR/build"
 CTRL_BIN="./g1_ctrl"
-ONNX_LIB="/home/yong/unitree_ws/unitree_rl_lab/deploy/thirdparty/onnxruntime-linux-x64-1.22.0/lib"
+ONNX_LIB="$SCRIPT_DIR/thirdparty/onnxruntime-linux-x64-1.22.0/lib"
 
 NETWORK="${1:-lo}"
 SIM_WAIT="${SIM_WAIT:-2}"   # seconds to let the simulator come up before the controller

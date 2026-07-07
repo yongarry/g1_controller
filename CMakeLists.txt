@@ -1,10 +1,13 @@
 cmake_minimum_required(VERSION 3.12)
-project(g1_29dof_controller)
+project(g1_controller)
 
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(yaml-cpp REQUIRED)
+
+list(APPEND CMAKE_PREFIX_PATH "/opt/unitree_robotics/lib/cmake")
+find_package(unitree_sdk2 REQUIRED)
 # Pinocchio: full-body forward kinematics, CoM and Jacobians for the footstep
 # command generator (State_Footstep). Install via robotpkg or `apt install
 # robotpkg-py3*-pinocchio` / conda `pinocchio`.
@@ -22,15 +25,13 @@ add_compile_definitions(
 
 include_directories(
   /usr/include/eigen3
-  /usr/local/include/ddscxx # dds
-  /usr/local/include/iceoryx/v2.0.2 # dds
   include
   ${PROJECT_SOURCE_DIR}/thirdparty/onnxruntime-linux-x64-1.22.0/include
   ${PROJECT_SOURCE_DIR}/include/
 )
 
 link_libraries(
-  unitree_sdk2 ddsc ddscxx rt pthread # dds
+  unitree_sdk2 rt pthread
   libboost_program_options.a libyaml-cpp.a fmt
   ${PROJECT_SOURCE_DIR}/thirdparty/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so.1.22.0
   pinocchio::pinocchio

@@ -39,13 +39,17 @@ namespace isaaclab
 struct FootCommandInput
 {
     float step_x = 0.0f;   // forward step length [m]
-    float step_y = 0.237f; // lateral step width (base, always positive) [m]
+    float step_y = 0.237f; // nominal lateral step width (magnitude, always positive) [m]
     float step_z = 0.0f;   // step height change (0 for 2d) [m]
     float step_yaw = 0.0f; // per-step turn [rad]
     float ssp_t = 0.75f;   // single support time [s]
     float dsp_t = 0.15f;   // double support time [s]
     float height = 0.075f; // swing apex height [m]
     float com_z = 0.0f;    // com height offset [m]
+    // Lateral crab-walk bias [m]: positive = net shift to +y (left). Applied
+    // asymmetrically per swing foot in FootstepCommand::build_foot_command_:
+    // left swing widens (+bias), right swing narrows (-bias).
+    float lateral_bias = 0.0f;
 };
 
 // Absolute (world-frame) foot-step target used by the "global" command mode.
@@ -102,8 +106,9 @@ public:
         {
             in.step_x = joy_->ly() * x_;        // forward
             in.step_yaw = -joy_->rx() * yaw_;   // turn
-            // lateral intent widens/narrows the (sign-applied) step width slightly
-            in.step_y = def_.step_y + std::abs(joy_->lx()) * y_;
+            // lateral crab-walk: bias is applied per swing foot in the planner
+            // (left swing widens, right swing narrows for positive bias).
+            in.lateral_bias = -joy_->lx() * y_;
         }
         return in;
     }

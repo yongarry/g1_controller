@@ -12,10 +12,14 @@
 
 #include <thread>
 #include <vector>
+#include <fstream>
+#include <string>
+#include <memory>
 #include "FSM/FSMState.h"
 #include "isaaclab/envs/manager_based_rl_env.h"
 #include "isaaclab/utils/kinematics.h"
 #include "isaaclab/envs/mdp/commands/footstep_command.h"
+#include "unitree/dds_wrapper/robots/go2/go2_sub.h"
 
 class State_Footstep : public FSMState
 {
@@ -28,6 +32,7 @@ public:
     {
         policy_thread_running = false;
         if (policy_thread.joinable()) policy_thread.join();
+        if (log_file_.is_open()) log_file_.close();
     }
 
     // Accessed by the command-backed observation terms (joint_ik_target, phase,
@@ -55,6 +60,17 @@ private:
 
     std::thread policy_thread;
     bool policy_thread_running = false;
+
+    // sim_odom: MuJoCo ground-truth base position from rt/odommodestate
+    bool use_sim_odom_ = false;
+    std::shared_ptr<unitree::robot::go2::subscription::SportModeState> odom_sub_;
+
+    // --- data logging (mirrors the tocabi cc.cpp writeFile columns) ----------
+    void open_log_file(const std::string& path);
+    void write_log_row(const Eigen::VectorXf& q_meas);
+    std::ofstream log_file_;
+    bool log_enabled_ = false;
+    long log_tick_ = 0;
 };
 
 REGISTER_FSM(State_Footstep)

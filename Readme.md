@@ -12,29 +12,48 @@ them through ONNX Runtime, and publishes low-level Unitree motor commands throug
 
 ## Features
 
-- FSM-based controller with `Passive`, `FixStand`, velocity RL, and mimic policy states.
+- FSM-based controller with `Passive`, `FixStand`, velocity RL, mimic, and footstep policy states.
 - Deploys exported RL policies from `params/deploy.yaml` and `exported/policy.onnx`.
 - Supports policy directory version discovery, such as `config/policy/velocity/v0`.
 - Uses joystick transition expressions defined in `config/config.yaml`.
+- Footstep deploy with on-device `OnlineFootCommand` (VRP + ZMP preview + Pinocchio IK).
+- Helper scripts under `cmd/` to generate foot-command CSVs and MuJoCo stepping-stone scenes.
 - Designed for Unitree G1 29-DoF deployment workflows.
 
 ## Project Layout
 
 ```text
 .
+├── cmd/
+│   ├── gen_cmd.py                    # sample local foot commands -> footcommands.csv
+│   ├── convert_footcommand_2_global.py
+│   └── gen_footstep_scene.py         # write stepping stones into MuJoCo scene XML
 ├── config/
-│   ├── config.yaml              # FSM states, transitions, and policy paths
-│   └── policy/                  # Exported deploy policies
+│   ├── config.yaml                   # FSM states, transitions, and policy paths
+│   ├── footcommands.csv              # local per-step commands (generated)
+│   ├── footcommands_global.csv       # world-frame targets (generated)
+│   ├── urdf/g1_29dof.urdf
+│   └── policy/                       # exported deploy policies
 ├── include/
-│   ├── FSM/                     # Base FSM state classes
-│   └── isaaclab/                # Deploy-side IsaacLab-style runtime helpers
+│   ├── FSM/                          # base FSM state classes
+│   └── isaaclab/                     # deploy-side IsaacLab-style runtime helpers
 ├── src/
-│   ├── State_RLBase.cpp         # Generic RL policy deploy state
-│   └── State_Mimic.cpp          # Motion/mimic policy deploy state
+│   ├── State_RLBase.cpp              # generic RL policy deploy state
+│   ├── State_Mimic.cpp               # motion/mimic policy deploy state
+│   └── State_Footstep.cpp            # footstep policy + command generator
 ├── thirdparty/
 │   └── onnxruntime-linux-x64-1.22.0/
+├── run_sim.sh                        # launch unitree_mujoco + g1_ctrl together
 ├── CMakeLists.txt
 └── main.cpp
+```
+
+Expected sibling repos (for sim2sim):
+
+```text
+g1_ws/
+├── g1_controller/          # this repo
+└── unitree_mujoco/         # MuJoCo simulator (unitree_sdk2 DDS)
 ```
 
 ## Dependencies
@@ -55,7 +74,7 @@ sudo apt install -y robotpkg-py3*-pinocchio
 # or conda:  conda install pinocchio -c conda-forge
 ```
 
-Install `unitree_sdk2` system-wide:
+Install `unitree_sdk2` system-wide (headers + libs under `/opt/unitree_robotics`):
 
 ```bash
 git clone https://github.com/unitreerobotics/unitree_sdk2.git
@@ -64,6 +83,10 @@ mkdir build && cd build
 cmake .. -DBUILD_EXAMPLES=OFF
 sudo make install
 ```
+
+`CMakeLists.txt` uses `find_package(unitree_sdk2)` with
+`CMAKE_PREFIX_PATH=/opt/unitree_robotics/lib/cmake`. If you installed the SDK
+elsewhere, point that path accordingly before running `cmake`.
 
 ONNX Runtime is expected under:
 
@@ -84,6 +107,8 @@ This builds the `g1_ctrl` executable.
 
 ## Run
 
+### Controller only
+
 For local simulation or loopback DDS:
 
 ```bash
@@ -100,6 +125,22 @@ LD_LIBRARY_PATH=../thirdparty/onnxruntime-linux-x64-1.22.0/lib:$LD_LIBRARY_PATH 
 
 Make sure any other process publishing to the low-level command channel is closed
 before running this controller.
+
+### Sim2sim (MuJoCo + controller)
+
+With `unitree_mujoco` built at `../unitree_mujoco/simulate/build`, launch both
+processes from the repo root:
+
+```bash
+./run_sim.sh            # network = lo
+./run_sim.sh enp3s0     # use a different network interface
+```
+
+`run_sim.sh` resolves paths relative to itself, so it works regardless of where
+`g1_ws` lives on disk. Ctrl+C tears down both the simulator and `g1_ctrl`.
+
+For footstep sim, use the footstep scene in `unitree_mujoco` and set
+`footstep.foot_state_source: sim_odom` in the footstep `deploy.yaml`.
 
 ## Policy Directory Format
 
@@ -161,15 +202,15 @@ If the policy requires custom observations, actions, reset behavior, or transiti
 checks, add a dedicated state implementation under `src/` and register it with the
 FSM system.
 
-## Footstep Policy (G1-2d)
+## Footstep Policy (G1-2d / 3d commands)
 
-`State_Footstep` deploys the `G12DFootEnvCfg` (`G1-2d`) footstep policy trained in
+`State_Footstep` deploys the `G12DFootEnvCfg` footstep policy trained in
 `isaaclab_dyros`. Unlike the velocity/mimic states, it reproduces the training-time
-`OnlineFootCommand` on-device: an operator-driven foot-step planner feeds a VRP
-generator + ZMP preview controller, whose CoM/foot reference is solved with a
-Pinocchio differential IK to produce the `joint_ik_target`, `phase` and
-`foot_commands_2d` observations the policy consumes. The policy outputs the 12
-lower-body joint targets; the upper body is held at its defaults.
+`OnlineFootCommand` on-device: a foot-step planner feeds a VRP generator + ZMP
+preview controller, whose CoM/foot reference is solved with a Pinocchio differential
+IK to produce the `joint_ik_target`, `phase`, and `foot_commands_3d` observations
+the policy consumes. The policy outputs the 12 lower-body joint targets; the upper
+body is held at its defaults.
 
 Layout:
 
@@ -189,7 +230,9 @@ Generate `policy.onnx` + `deploy.yaml` from a trained checkpoint:
     --out_dir <repo>/g1_controller/config/policy/footstep/v0
 ```
 
-FSM flow (see `config/config.yaml`):
+### FSM flow
+
+See `config/config.yaml`:
 
 ```text
 Passive --[LT+Up]--> FixStand --[RB+Y]--> Footstep
@@ -197,10 +240,75 @@ Passive --[LT+Up]--> FixStand --[RB+Y]--> Footstep
 Footstep --[LT+B]--> Passive ,  Footstep --[RB+X]--> Velocity
 ```
 
-In `Footstep`, the left stick commands forward step length (`ly`) and step-width
-trim (`lx`); the right stick (`rx`) commands per-step turning. Nominal step width,
-support/swing times and apex height come from `footstep.default_input` in
-`deploy.yaml`, and all operator inputs are clamped to the trained `ranges`.
+### Joystick mode (`command_source: joystick`)
+
+In `Footstep`, the left stick commands forward step length (`ly`) and lateral
+crab-walk (`lx`: left swing widens / right swing narrows via `lateral_bias`); the
+right stick (`rx`) commands per-step turning. Nominal step width, support/swing
+times and apex height come from `footstep.default_input` in `deploy.yaml`, and all
+operator inputs are clamped to the trained `ranges` (including `foot_pos_z` for
+per-step height change).
+
+### Command sources (`deploy.yaml` → `footstep.command_source`)
+
+| Mode | Description |
+|------|-------------|
+| `joystick` | Operator drives local per-step commands each control tick. |
+| `csv` | Replay local per-step commands from `footstep.csv_path`. |
+| `csv_global` | Follow absolute world-frame targets from `footstep.global_csv_path`; the planner recomputes the local command from the accumulated stance foot to each target every step (drift-corrected). |
+
+For `csv` / `csv_global`, generate the CSV files with the `cmd/` scripts (below).
+Set `footstep.global_init_lfoot` / `global_init_rfoot` to the spawn foot poses in
+the MuJoCo scene keyframe so the global plan frame matches the simulator.
+
+### Generating foot commands and MuJoCo scene
+
+End-to-end workflow for scripted footstep tests in sim:
+
+```bash
+# 1) sample local commands (x, y, z, yaw) -> config/footcommands.csv
+python3 cmd/gen_cmd.py 30 --seed 0
+#    also runs convert + scene generation at the end
+
+# or run the steps individually:
+python3 cmd/convert_footcommand_2_global.py \
+    --input config/footcommands.csv \
+    --output config/footcommands_global.csv
+
+python3 cmd/gen_footstep_scene.py
+```
+
+**`gen_cmd.py`** — samples `step_x`, `step_y`, `step_z`, `step_yaw` from trained
+ranges (defaults match `footstep.ranges` in deploy.yaml). Feet alternate R/L; the
+last row is a stop step (`step_x=0`, `step_z=0`, `step_yaw=0`). Override ranges
+with flags, e.g. `--z -0.1 0.15`.
+
+Local CSV columns:
+
+```text
+foot,step_x,step_y,step_z,step_yaw,ssp_t,dsp_t,height
+```
+
+**`convert_footcommand_2_global.py`** — accumulates local steps into world-frame
+swing-foot targets. `step_y` is a positive magnitude; sign comes from `foot` (L/R).
+`step_z` is a per-step height change accumulated into `pos_z`.
+
+Global CSV columns:
+
+```text
+foot,pos_x,pos_y,pos_z,yaw,ssp_t,dsp_t,height
+```
+
+**`gen_footstep_scene.py`** — writes stepping stones into
+`unitree_mujoco/unitree_robots/g1/scene_29dof_footstep.xml` (idempotent; replaces
+only the marked auto-generated region):
+
+- A **ground plane** at the lowest `pos_z` in the global CSV.
+- One **variable-height box** per footstep from that plane up to each `pos_z`
+  (horizontal size via `--size HX HY`; height is computed automatically).
+
+Then set `command_source: csv_global` in the footstep `deploy.yaml` and run
+`./run_sim.sh`.
 
 ### Deployment notes / assumptions
 

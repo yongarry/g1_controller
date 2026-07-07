@@ -5,7 +5,9 @@
 #include "isaaclab/envs/mdp/terminations.h"
 
 #include <chrono>
+#include <cmath>
 #include <map>
+#include <iomanip>
 
 isaaclab::FootstepCommand* State_Footstep::command = nullptr;
 
@@ -114,6 +116,7 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         };
         pair("foot_pos_x", fcfg.foot_pos_x_min, fcfg.foot_pos_x_max);
         pair("foot_pos_y", fcfg.foot_pos_y_min, fcfg.foot_pos_y_max);
+        pair("foot_pos_z", fcfg.foot_pos_z_min, fcfg.foot_pos_z_max);
         pair("foot_rot_y", fcfg.foot_rot_y_min, fcfg.foot_rot_y_max);
         pair("foot_ssp_time", fcfg.foot_ssp_min, fcfg.foot_ssp_max);
         pair("foot_dsp_time", fcfg.foot_dsp_min, fcfg.foot_dsp_max);
@@ -137,6 +140,31 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         joy_x_scale_ = yaml_get(js, "x_scale", joy_x_scale_);
         joy_y_scale_ = yaml_get(js, "y_scale", joy_y_scale_);
         joy_yaw_scale_ = yaml_get(js, "yaw_scale", joy_yaw_scale_);
+    }
+
+    // ---- foot world-position source ----
+    // fk_odometry: FK landing accumulation (default, hardware)
+    // sim_odom:    MuJoCo rt/odommodestate base truth + FK foot offset
+    {
+        std::string foot_src = fs["foot_state_source"] ? fs["foot_state_source"].as<std::string>()
+                                                       : std::string("fk_odometry");
+        std::transform(foot_src.begin(), foot_src.end(), foot_src.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+        use_sim_odom_ = (foot_src == "sim_odom");
+        if (use_sim_odom_)
+        {
+            std::string topic = fs["sim_odom_topic"] ? fs["sim_odom_topic"].as<std::string>()
+                                                     : std::string("rt/odommodestate");
+            odom_sub_ = std::make_shared<unitree::robot::go2::subscription::SportModeState>(topic);
+            odom_sub_->wait_for_connection();
+            spdlog::info("[Footstep] foot_state_source = sim_odom (topic={})", topic);
+        }
+        else
+        {
+            if (foot_src != "fk_odometry")
+                spdlog::warn("[Footstep] unknown foot_state_source '{}', using fk_odometry", foot_src);
+            spdlog::info("[Footstep] foot_state_source = fk_odometry");
+        }
     }
 
     // ---- foot-command source ----
@@ -195,6 +223,9 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         command_->set_input(command_source_->input());
     }
 
+    command_->set_foot_state_source(use_sim_odom_ ? isaaclab::FootStateSource::SIM_ODOM
+                                                  : isaaclab::FootStateSource::FK_ODOMETRY);
+
     // ---- env (policy + managers) ----
     auto articulation = std::make_shared<unitree::BaseArticulation<LowState_t::SharedPtr>>(FSMState::lowstate);
     env = std::make_unique<isaaclab::ManagerBasedRLEnv>(deploy, articulation);
@@ -215,6 +246,66 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         std::make_pair(
             [&]()->bool{ return isaaclab::mdp::bad_orientation(env.get(), 1.0); },
             FSMStringMap.right.at("Passive")));
+
+    // ---- data logging (optional) ----
+    // Set `footstep: log_file: <path>` in deploy.yaml to enable. Relative paths
+    // are resolved against the project dir. Defaults to "footstep_log.txt".
+    std::string log_path = fs["log_file"] ? fs["log_file"].as<std::string>()
+                                          : std::string("footstep_log.txt");
+    if (!log_path.empty())
+    {
+        std::filesystem::path lp = log_path;
+        if (lp.is_relative()) lp = param::proj_dir / lp;
+        open_log_file(lp.string());
+    }
+}
+
+void State_Footstep::open_log_file(const std::string& path)
+{
+    log_file_.open(path, std::ios::out | std::ios::trunc);
+    if (!log_file_.is_open())
+    {
+        spdlog::warn("[FootLog] could not open log file '{}': logging disabled.", path);
+        return;
+    }
+    log_file_ << std::fixed << std::setprecision(6);
+    // Column layout (tab separated), mirroring tocabi cc.cpp writeFile:
+    log_file_ << "tick\twalking_tick"
+                 "\tref_zmp_x\tref_zmp_y\tref_zmp_z"
+                 "\ttarget_com_stance_x\ttarget_com_stance_y\ttarget_com_stance_z"
+                 "\tcom_stance_x\tcom_stance_y\tcom_stance_z"
+                 "\tcom_global_x\tcom_global_y\tcom_global_z"
+                 "\tlfoot_x\tlfoot_y\tlfoot_z\trfoot_x\trfoot_y\trfoot_z"
+                 "\ttarget_com_global_x\ttarget_com_global_y\ttarget_com_global_z"
+                 "\tq_leg_desired[0..11]\tq_leg_meas[0..11]\n";
+    log_enabled_ = true;
+    spdlog::info("[FootLog] logging to '{}'.", path);
+}
+
+void State_Footstep::write_log_row(const Eigen::VectorXf& q_meas)
+{
+    if (!log_enabled_) return;
+    const auto& c = *command_;
+    const isaaclab::math::Vec3 ref_zmp = c.ref_zmp();
+    const isaaclab::math::Vec3 tgt_com_st = c.target_com_stance();
+    const isaaclab::math::Vec3 com_st = c.com_stance();
+    const isaaclab::math::Vec3 com_gl = c.com_global();
+    const isaaclab::math::Vec3 lfoot = c.left_foot_pos();
+    const isaaclab::math::Vec3 rfoot = c.right_foot_pos();
+    const isaaclab::math::Vec3 tgt_com_gl = c.target_com_global();
+    const Eigen::VectorXf& q_des = c.target_joint_pos();
+
+    log_file_ << log_tick_ << "\t" << c.walking_tick() << "\t";
+    log_file_ << ref_zmp[0] << "\t" << ref_zmp[1] << "\t" << ref_zmp[2] << "\t";
+    log_file_ << tgt_com_st[0] << "\t" << tgt_com_st[1] << "\t" << tgt_com_st[2] << "\t";
+    log_file_ << com_st[0] << "\t" << com_st[1] << "\t" << com_st[2] << "\t";
+    log_file_ << com_gl[0] << "\t" << com_gl[1] << "\t" << com_gl[2] << "\t";
+    log_file_ << lfoot[0] << "\t" << lfoot[1] << "\t" << lfoot[2] << "\t" << rfoot[0] << "\t" << rfoot[1] << "\t" << rfoot[2] << "\t";
+    log_file_ << tgt_com_gl[0] << "\t" << tgt_com_gl[1] << "\t" << tgt_com_gl[2] << "\t";
+    for (int i = 0; i < q_des.size(); ++i) log_file_ << q_des(i) << "\t";
+    for (int i = 0; i < 12 && i < q_meas.size(); ++i) log_file_ << q_meas(i) << "\t";
+    log_file_ << "\n";
+    ++log_tick_;
 }
 
 void State_Footstep::enter()
@@ -253,11 +344,19 @@ void State_Footstep::enter()
 
         Eigen::VectorXf q(29), qd(29);
 
+        auto update_base_from_odom = [&]() {
+            if (!use_sim_odom_ || !odom_sub_) return;
+            std::lock_guard<std::mutex> lock(odom_sub_->mutex_);
+            const auto& p = odom_sub_->msg_.position();
+            command_->set_base_pos_world(isaaclab::math::Vec3(p[0], p[1], p[2]));
+        };
+
         // initial reset
         env->robot->update();
         load_full_state(q, qd);
         kin_->set_state(q, qd);
         command_->robot_quat_w_ = env->robot->data.root_quat_w;
+        update_base_from_odom();
         if (command_source_) command_->set_input(command_source_->input());
         command_->reset();
         env->reset();
@@ -268,11 +367,26 @@ void State_Footstep::enter()
             load_full_state(q, qd);
             kin_->set_state(q, qd);
             command_->robot_quat_w_ = env->robot->data.root_quat_w;
+            update_base_from_odom();
             if (command_source_) command_->set_input(command_source_->input());
             command_->compute();
             // advance the (csv) command source when a footstep completes
             if (command_source_ && command_->step_completed()) command_source_->advance();
+            // per-step landing error report (mirrors tocabi cc.cpp)
+            if (command_->step_completed())
+            {
+                const auto& e = command_->last_step_error();
+                spdlog::info("Foot Position error : {:.4f} [m]", std::sqrt(e[0]*e[0] + e[1]*e[1]));
+                spdlog::info(">> X error : {:.4f} [m]", std::abs(e[0]));
+                spdlog::info(">> Y error : {:.4f} [m]", std::abs(e[1]));
+                spdlog::info("Foot Yaw error : {:.4f} [rad]", std::abs(e[2]));
+                const auto& fc = command_->foot_command0();
+                spdlog::info("Next foot step command : {:.4f} [m], {:.4f} [m], {:.4f} [rad]", fc[0], fc[1], fc[5]);
+                // spdlog::info("t_total: {:.3f}", command_->last_step_total_time());
+            }
             env->step();
+
+            write_log_row(q);
 
             std::this_thread::sleep_until(sleepTill);
             sleepTill += dt;

@@ -36,6 +36,13 @@
 namespace isaaclab
 {
 
+// How world-frame foot positions are obtained (logging & global-plan stance tracking).
+enum class FootStateSource
+{
+    FK_ODOMETRY, // default: accumulate FK landing measurements (stance_world_)
+    SIM_ODOM,    // MuJoCo sim: rt/odommodestate base position + FK foot offset
+};
+
 struct FrameState
 {
     math::Vec3 pos = math::Vec3::Zero();
@@ -76,6 +83,7 @@ public:
         // command ranges (used to clamp joystick-driven input)
         float foot_pos_x_min = -0.2f, foot_pos_x_max = 0.2f;
         float foot_pos_y_min = 0.2f, foot_pos_y_max = 0.4f;
+        float foot_pos_z_min = -0.15f, foot_pos_z_max = 0.15f;
         float foot_rot_y_min = -0.2f, foot_rot_y_max = 0.2f;
         float foot_ssp_min = 0.5f, foot_ssp_max = 1.0f;
         float foot_dsp_min = 0.0f, foot_dsp_max = 0.3f;
@@ -119,12 +127,22 @@ public:
     }
     bool global_mode() const { return global_mode_; }
 
+    // Foot world-position source (see deploy.yaml foot_state_source).
+    void set_foot_state_source(FootStateSource src) { foot_state_source_ = src; }
+    FootStateSource foot_state_source() const { return foot_state_source_; }
+
+    // Sim only: pelvis world position from rt/odommodestate (set each control tick).
+    void set_base_pos_world(const math::Vec3& p) { base_pos_world_ = p; }
+    const math::Vec3& base_pos_world() const { return base_pos_world_; }
+
     // --- public API mirroring CommandTerm ---
     void reset()
     {
         command_counter_ = 0;
         resample_command_();
         update_link_states_();
+        if (foot_state_source_ == FootStateSource::SIM_ODOM && !global_mode_)
+            init_stance_world_from_sim_();
         generate_vrp_ref_trajectory_();
         preview_.reset_error_integral();
         Eigen::Matrix3f s = Eigen::Matrix3f::Zero();
@@ -143,6 +161,14 @@ public:
         step_completed_ = (time_left_ <= 0.0f);
         if (step_completed_)
         {
+            // Landing error of the completed step (commanded minus measured,
+            // stance frame), captured before the command buffer shifts.
+            const float sw_yaw = math::wrap_to_pi(math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
+            last_step_error_[0] = foot_command_[0][0] - swing_foot_stance_pos_[0];
+            last_step_error_[1] = foot_command_[0][1] - swing_foot_stance_pos_[1];
+            last_step_error_[2] = math::wrap_to_pi(foot_command_[0][5] - sw_yaw);
+            last_step_total_time_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
+
             update_command_();
             update_link_states_();
             generate_vrp_ref_trajectory_();
@@ -158,6 +184,60 @@ public:
     // appended). Used to advance an external FootCommandSource (e.g. CSV).
     bool step_completed() const { return step_completed_; }
 
+    // Landing error of the footstep that just completed: commanded step minus
+    // the measured swing-foot landing, in the stance frame. Layout: [x, y, yaw].
+    // Only meaningful on ticks where step_completed() is true.
+    const math::Vec3& last_step_error() const { return last_step_error_; }
+    // Total duration (ssp + 2*dsp) of that completed step.
+    float last_step_total_time() const { return last_step_total_time_; }
+
+    // Current foot command buffer slot 0 (stance frame): [x, y, z, r, p, yaw, ssp, dsp, height].
+    const std::array<float, 9>& foot_command0() const { return foot_command_[0]; }
+
+    // --- logging accessors (mirror the tocabi cc.cpp writeFile columns) ------
+    // Positions marked "stance frame" are expressed in the current stance foot
+    // yaw frame. CoM quantities marked "global" are in the pelvis-anchored
+    // frame (the pelvis is re-anchored at the origin every control tick, so
+    // the pelvis position itself is always zero and is not logged). Foot
+    // positions are in the accumulated world frame (see stance_world_), which
+    // persists across footsteps.
+
+    // Reference ZMP (VRP) at the current walking tick, in the stance frame.
+    math::Vec3 ref_zmp() const
+    {
+        int idx = static_cast<int>(walking_tick_);
+        if (idx < 0) idx = 0;
+        if (idx >= vrp_.NL()) idx = vrp_.NL() - 1;
+        return vrp_.vrp_ref_firststance[idx];
+    }
+    // Target CoM (preview controller output) in the stance frame.
+    math::Vec3 target_com_stance() const { return preview_.state().row(0).transpose(); }
+    // Measured CoM in the stance frame.
+    math::Vec3 com_stance() const { return com_pos_stance_; }
+    // Measured CoM in the (pelvis-anchored) global frame.
+    math::Vec3 com_global() const { return com_pos_global_; }
+    // Target CoM in the (pelvis-anchored) global frame.
+    math::Vec3 target_com_global() const { return target_com_global_pos_; }
+    // Foot positions in the world frame, resolved to L/R.
+    // fk_odometry: accumulated stance_world_ + per-tick FK swing measurement.
+    // sim_odom:    odom base position + IMU-rotated FK foot offset (each tick).
+    math::Vec3 left_foot_pos() const
+    {
+        if (foot_state_source_ == FootStateSource::SIM_ODOM)
+            return foot_world_pos_sim_(Kinematics::LEFT);
+        return (phase_indicator_[0] == 0) ? stance_foot_world_pos_() : swing_foot_world_pos_();
+    }
+    math::Vec3 right_foot_pos() const
+    {
+        if (foot_state_source_ == FootStateSource::SIM_ODOM)
+            return foot_world_pos_sim_(Kinematics::RIGHT);
+        return (phase_indicator_[0] == 0) ? swing_foot_world_pos_() : stance_foot_world_pos_();
+    }
+    // Desired leg joint angles (12: left 6 + right 6, SDK 0..11 order).
+    const Eigen::VectorXf& target_joint_pos() const { return target_joint_pos_; }
+    // Per-step walking tick (resets to 0 at each footstep).
+    long walking_tick() const { return walking_tick_; }
+
 private:
     Kinematics::Side stance_side_() const
     {
@@ -170,21 +250,84 @@ private:
 
     static float clampf(float v, float lo, float hi) { return std::max(lo, std::min(hi, v)); }
 
+    // --- accumulated world frame (for logging & the global command mode) -----
+    // The current stance foot sits at stance_world_; the swing foot is the
+    // per-tick FK measurement (stance frame) expressed in that world frame.
+    math::Vec3 stance_foot_world_pos_() const
+    {
+        return math::Vec3(stance_world_.x, stance_world_.y, stance_world_.z);
+    }
+    math::Vec3 swing_foot_world_pos_() const
+    {
+        const float c = std::cos(stance_world_.yaw);
+        const float s = std::sin(stance_world_.yaw);
+        const math::Vec3& sw = swing_foot_stance_pos_;
+        return math::Vec3(stance_world_.x + c * sw[0] - s * sw[1],
+                          stance_world_.y + s * sw[0] + c * sw[1],
+                          stance_world_.z + sw[2]);
+    }
+
+    // World foot pose from sim odom base + FK (pelvis frame).
+    math::Vec3 foot_world_pos_sim_(Kinematics::Side s) const
+    {
+        return base_pos_world_ + math::quat_apply(robot_quat_w_, kin_->foot_pos(s));
+    }
+    WorldPose world_pose_from_foot_sim_(Kinematics::Side s) const
+    {
+        const math::Vec3 pos = foot_world_pos_sim_(s);
+        const math::Quat q = math::quat_mul(robot_quat_w_, kin_->foot_quat(s));
+        const float yaw = math::wrap_to_pi(math::euler_xyz_from_quat(q)[2]);
+        return WorldPose{pos[0], pos[1], pos[2], yaw};
+    }
+
+    // Initialize stance_world_ from the current stance foot (sim_odom, local mode).
+    void init_stance_world_from_sim_()
+    {
+        stance_world_ = world_pose_from_foot_sim_(stance_side_());
+    }
+
+    // Accumulate the achieved stance pose at a step boundary: the foot that
+    // just swung (its landing measured relative to the old stance frame)
+    // becomes the new stance. This corrects drift between commanded and
+    // achieved steps.
+    void accumulate_stance_world_()
+    {
+        if (foot_state_source_ == FootStateSource::SIM_ODOM)
+        {
+            // Absolute world pose of the foot that just landed (swing side).
+            stance_world_ = world_pose_from_foot_sim_(swing_side_());
+            return;
+        }
+        const math::Vec3 sw = swing_foot_stance_pos_;
+        const float sw_yaw = math::wrap_to_pi(math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
+        const float c = std::cos(stance_world_.yaw);
+        const float s = std::sin(stance_world_.yaw);
+        WorldPose next;
+        next.x = stance_world_.x + c * sw[0] - s * sw[1];
+        next.y = stance_world_.y + s * sw[0] + c * sw[1];
+        next.z = stance_world_.z + sw[2];
+        next.yaw = math::wrap_to_pi(stance_world_.yaw + sw_yaw);
+        stance_world_ = next;
+    }
+
     // Build the 9-dim foot command for `step` from the operator input + phase.
     std::array<float, 9> build_foot_command_(int step)
     {
         std::array<float, 9> fc{};
         fc[0] = clampf(input_.step_x, cfg_.foot_pos_x_min, cfg_.foot_pos_x_max);
-        fc[1] = clampf(input_.step_y, cfg_.foot_pos_y_min, cfg_.foot_pos_y_max); // positive base
-        fc[2] = input_.step_z;
+        // Nominal width is symmetric; lateral_bias shifts net CoM sideways by
+        // widening the left-swing step and narrowing the right-swing step.
+        const float y_mag = (phase_indicator_[step] == 1)
+            ? clampf(input_.step_y + input_.lateral_bias, cfg_.foot_pos_y_min, cfg_.foot_pos_y_max)
+            : clampf(input_.step_y - input_.lateral_bias, cfg_.foot_pos_y_min, cfg_.foot_pos_y_max);
+        fc[1] = (phase_indicator_[step] == 0) ? -y_mag : y_mag;
+        fc[2] = clampf(input_.step_z, cfg_.foot_pos_z_min, cfg_.foot_pos_z_max);
         fc[3] = 0.0f;
         fc[4] = 0.0f;
         fc[5] = clampf(input_.step_yaw, cfg_.foot_rot_y_min, cfg_.foot_rot_y_max);
         fc[6] = clampf(input_.ssp_t, cfg_.foot_ssp_min, cfg_.foot_ssp_max);
         fc[7] = clampf(input_.dsp_t, cfg_.foot_dsp_min, cfg_.foot_dsp_max);
         fc[8] = clampf(input_.height, cfg_.foot_height_min, cfg_.foot_height_max);
-        // right-swing steps (phase indicator 0) place the foot on the -y side
-        if (phase_indicator_[step] == 0) fc[1] *= -1.0f;
         return fc;
     }
 
@@ -193,6 +336,7 @@ private:
         if (global_mode_) { resample_command_global_(); return; }
         const int LA = cfg_.future_foot_step_num;
         walking_tick_ = 0;
+        stance_world_ = WorldPose{}; // world frame anchored at the initial stance foot
         phase_indicator_[0] = cfg_.start_phase_indicator;
         for (int i = 0; i < LA - 1; ++i) phase_indicator_[i + 1] = 1 - phase_indicator_[i];
         for (int s = 0; s < LA; ++s) foot_command_[s] = build_foot_command_(s);
@@ -204,6 +348,7 @@ private:
     void update_command_()
     {
         if (global_mode_) { update_command_global_(); return; }
+        accumulate_stance_world_(); // keep the world-frame foot poses tracking
         const int LA = cfg_.future_foot_step_num;
         walking_tick_ = 0;
         for (int s = 0; s < LA - 1; ++s) foot_command_[s] = foot_command_[s + 1];
@@ -246,17 +391,6 @@ private:
         return fc;
     }
 
-    // In-place stand step used once the global plan is exhausted.
-    std::array<float, 9> default_global_step_(int phase) const
-    {
-        const float ssp = global_plan_.back().ssp_t;
-        const float dsp = global_plan_.back().dsp_t;
-        const float h = global_plan_.back().height;
-        std::array<float, 9> fc{0.0f, kInPlaceStepY_, 0.0f, 0.0f, 0.0f, 0.0f, ssp, dsp, h};
-        if (phase == 0) fc[1] *= -1.0f; // right swing places the foot on -y
-        return fc;
-    }
-
     // World pose used as the swing origin for buffer slot `s` (>=1): the planned
     // landing of the previous footstep, or the accumulated stance for s==0.
     WorldPose plan_pose_(int idx) const
@@ -265,26 +399,52 @@ private:
         return WorldPose{t.x, t.y, t.z, t.yaw};
     }
 
+    // World pose the foot swinging at (virtual) plan index `idx` should HOLD
+    // once the plan is exhausted: its own last planned landing (feet alternate,
+    // so this is one of the last two plan entries), or the initial stance pose
+    // if the plan never moved that foot. Anchoring the in-place steps to these
+    // fixed world poses keeps them drift-corrected; a purely relative in-place
+    // step would accumulate the per-step landing error into stance_world_.
+    WorldPose held_pose_(int idx) const
+    {
+        const int N = (int)global_plan_.size();
+        const bool same_foot_as_last = (((idx - (N - 1)) % 2) == 0);
+        if (!same_foot_as_last && N < 2) return global_init_stance_;
+        const GlobalFootTarget& t = global_plan_[same_foot_as_last ? N - 1 : N - 2];
+        return WorldPose{t.x, t.y, t.z, t.yaw};
+    }
+
     void fill_global_buffer_()
     {
         const int LA = cfg_.future_foot_step_num;
+        const int N = (int)global_plan_.size();
         for (int s = 0; s < LA; ++s)
         {
             const int idx = planner_index_ + s;
             phase_indicator_[s] = phase_for_(idx);
-            if (idx < (int)global_plan_.size())
+
+            WorldPose from;
+            if (s == 0) from = stance_world_;
+            else if (idx - 1 < N) from = plan_pose_(idx - 1);
+            else from = held_pose_(idx - 1);
+
+            if (idx < N)
             {
-                const WorldPose from = (s == 0) ? stance_world_ : plan_pose_(idx - 1);
                 foot_command_[s] = build_global_step_(from, global_plan_[idx]);
                 com_z_command_[s] = global_plan_[idx].com_z;
             }
             else
             {
-                foot_command_[s] = default_global_step_(phase_indicator_[s]);
+                // Past the plan end: station-keep on the final plan poses
+                // (timing/height/com_z carried over from the last plan entry).
+                GlobalFootTarget tgt = global_plan_.back();
+                const WorldPose hp = held_pose_(idx);
+                tgt.x = hp.x; tgt.y = hp.y; tgt.z = hp.z; tgt.yaw = hp.yaw;
+                foot_command_[s] = build_global_step_(from, tgt);
                 com_z_command_[s] = global_plan_.back().com_z;
             }
         }
-        com_z_command_[LA] = (planner_index_ + LA - 1 < (int)global_plan_.size())
+        com_z_command_[LA] = (planner_index_ + LA - 1 < N)
                                  ? global_plan_[planner_index_ + LA - 1].com_z
                                  : global_plan_.back().com_z;
         time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
@@ -301,21 +461,8 @@ private:
     void update_command_global_()
     {
         walking_tick_ = 0;
-        // Accumulate the achieved stance pose: the foot that just swung (its
-        // landing measured relative to the old stance frame) becomes the new
-        // stance. This corrects drift between commanded and achieved steps.
-        const math::Vec3 sw = swing_foot_stance_pos_;
-        const float sw_yaw = math::wrap_to_pi(math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
-        const float c = std::cos(stance_world_.yaw);
-        const float s = std::sin(stance_world_.yaw);
-        WorldPose next;
-        next.x = stance_world_.x + c * sw[0] - s * sw[1];
-        next.y = stance_world_.y + s * sw[0] + c * sw[1];
-        next.z = stance_world_.z + sw[2];
-        next.yaw = math::wrap_to_pi(stance_world_.yaw + sw_yaw);
-        stance_world_ = next;
-
-        ++planner_index_; // past plan end, fill_global_buffer_ emits in-place steps
+        accumulate_stance_world_();
+        ++planner_index_; // past plan end, fill_global_buffer_ emits station-keeping steps
         fill_global_buffer_();
     }
 
@@ -470,7 +617,8 @@ private:
                 et[i] = math::cubic(math::wrap_to_pi(e0[i]), 0.f, math::wrap_to_pi(e1[i]), 0.f, ssp_t, ct);
             quat = math::quat_from_euler_xyz(et[0], et[1], et[2]);
             // z: lift up / maintain / down
-            const float lift = std::max(swing_foot_start_stance_pos_[2], swing_foot_end_stance_pos_[2]) + height;
+            const float lift = std::max(0.0f, std::max(swing_foot_start_stance_pos_[2], swing_foot_end_stance_pos_[2])) + height;
+            // const float lift = height;
             const int up_end = static_cast<int>((dsp_t + ssp_t * cfg_.swing_up_timing) / dt);
             const int down_start = static_cast<int>((dsp_t + ssp_t * cfg_.swing_down_timing) / dt);
             if (tick < up_end)
@@ -525,18 +673,27 @@ private:
     long walking_tick_ = 0;
     float time_left_ = 0.0f;
     bool step_completed_ = false;
+    // landing error of the last completed footstep (stance frame): [x, y, yaw]
+    math::Vec3 last_step_error_ = math::Vec3::Zero();
+    float last_step_total_time_ = 0.0f;
 
     std::vector<std::array<float, 9>> foot_command_;
     std::vector<float> com_z_command_;
     std::vector<int> phase_indicator_;
 
     // global command mode (absolute world-frame foot targets)
-    static constexpr float kInPlaceStepY_ = 0.237f; // nominal stance width
     bool global_mode_ = false;
     std::vector<GlobalFootTarget> global_plan_;
     WorldPose global_init_stance_; // world pose of the initial stance foot (plan anchor)
     int planner_index_ = 0;        // plan index of the step at buffer slot 0
-    WorldPose stance_world_;       // accumulated world pose of current stance foot
+    // Accumulated world pose of the current stance foot. Maintained in every
+    // command mode (drives the planner in global mode; used by the world-frame
+    // logging accessors in all modes). Anchored at the initial stance foot
+    // (or global_init_stance_ in global mode).
+    WorldPose stance_world_;
+
+    FootStateSource foot_state_source_ = FootStateSource::FK_ODOMETRY;
+    math::Vec3 base_pos_world_ = math::Vec3::Zero(); // pelvis world pos (sim_odom)
 
     // measured state (per tick)
     math::Vec3 com_pos_global_ = math::Vec3::Zero();
