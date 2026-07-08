@@ -49,16 +49,22 @@ com_global = T{:, startsWith(T.Properties.VariableNames, "com_global")};
 lfoot = T{:, startsWith(T.Properties.VariableNames, "lfoot")};
 rfoot = T{:, startsWith(T.Properties.VariableNames, "rfoot")};
 
-for i = 1:3
-    subplot(3,1,i);
-    plot(com_global(:, i)); hold on;
-    plot(lfoot(:, i));
-    plot(rfoot(:, i));
-    grid on;
-    title(['Foot Trajectory ' num2str(i)]);
-    legend('COM Global', 'Left Foot', 'Right Foot');
-end
+% for i = 1:3
+%     subplot(3,1,i);
+%     plot(com_global(:, i)); hold on;
+%     plot(lfoot(:, i));
+%     plot(rfoot(:, i));
+%     grid on;
+%     title(['Foot Trajectory ' num2str(i)]);
+%     legend('COM Global', 'Left Foot', 'Right Foot');
+% end
 
+plot3(lfoot(:,1), lfoot(:,2), lfoot(:,3)); hold on;
+plot3(rfoot(:,1), rfoot(:,2), rfoot(:,3));
+grid on; axis equal;
+xlabel('x'); ylabel('y'); zlabel('z');
+legend('Left Foot', 'Right Foot');
+view(3);
 
 %% joint traj
 q_des  = T{:, startsWith(T.Properties.VariableNames, "q_leg_desired")};

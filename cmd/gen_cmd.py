@@ -78,9 +78,9 @@ if __name__ == "__main__":
                    metavar=("MIN", "MAX"), help="step_z range [m]")
     p.add_argument("--yaw", nargs=2, type=float, default=list(RANGE_YAW),
                    metavar=("MIN", "MAX"), help="step_yaw range [rad]")
-    p.add_argument("--ssp", type=float, default=0.6, help="single support time [s]")
-    p.add_argument("--dsp", type=float, default=0.075, help="double support time [s]")
-    p.add_argument("--height", type=float, default=0.1, help="swing apex height [m]")
+    p.add_argument("--ssp", type=float, default=0.7, help="single support time [s]")
+    p.add_argument("--dsp", type=float, default=0.1, help="double support time [s]")
+    p.add_argument("--height", type=float, default=0.075, help="swing apex height [m]")
     p.add_argument("--no-stop", action="store_true",
                    help="do not force the last step to be a stop step")
     args = p.parse_args()
