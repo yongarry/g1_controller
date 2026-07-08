@@ -19,6 +19,7 @@
 #include "isaaclab/envs/manager_based_rl_env.h"
 #include "isaaclab/utils/kinematics.h"
 #include "isaaclab/envs/mdp/commands/footstep_command.h"
+#include "isaaclab/envs/mdp/commands/vision_foot_target_source.h"
 #include "unitree/dds_wrapper/robots/go2/go2_sub.h"
 
 class State_Footstep : public FSMState
@@ -45,6 +46,8 @@ private:
     std::unique_ptr<isaaclab::FootstepCommand> command_;
     // Selectable foot-command source (joystick by default, or csv) - see deploy.yaml.
     std::unique_ptr<isaaclab::FootCommandSource> command_source_;
+    // ArUco footstep-target subscriber (command_source == "vision").
+    isaaclab::VisionFootTargetSubscriber::SharedPtr vision_sub_;
 
     // upper-body joints held at default (SDK indices + targets/gains)
     std::vector<int> upper_ids_;

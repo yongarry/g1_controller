@@ -1,0 +1,29 @@
+{
+  "dictionary": {
+    "bits": 4,
+    "size": 250,
+    "seed": 7
+  },
+  "marker_size": 0.03,
+  "marker_spread": 0.04,
+  "quiet_zone_modules": 1,
+  "markers_per_target": 4,
+  "targets": [
+    {
+      "index": 0,
+      "foot": "R",
+      "marker_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "world": {
+        "x": -0.0518,
+        "y": -0.1185,
+        "z": 0.0,
+        "yaw": 0.0
+      }
+    }
+  ]
+}

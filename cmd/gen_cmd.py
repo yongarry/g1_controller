@@ -26,10 +26,10 @@ _PROJ_DIR = os.path.dirname(_THIS_DIR)
 DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 
 # Trained command ranges (must match footstep deploy.yaml `footstep.ranges`).
-RANGE_X = (0.2, 0.3)     # forward step length [m]
-RANGE_Y = (0.2, 0.3)      # lateral step width (positive magnitude) [m]
-RANGE_Z = (-0.15, 0.15)   # per-step height change [m]
-RANGE_YAW = (-0.4, 0.4)   # per-step turn [rad]
+RANGE_X = (0.25, 0.25)     # forward step length [m]
+RANGE_Y = (0.237, 0.237)      # lateral step width (positive magnitude) [m]
+RANGE_Z = (0.1, 0.1)   # per-step height change [m]
+RANGE_YAW = (-0., 0.)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
@@ -47,8 +47,8 @@ def build_rows(n, start, rx, ry, rz, ryaw, ssp, dsp, height, stop_last):
         if is_last_stop:
             step_x, step_y, step_z, step_yaw = 0.0, NOMINAL_Y, 0.0, 0.0
         elif i == 0:
-            step_x = sample(*rx)
-            step_y = sample(*ry)
+            step_x = 0.5
+            step_y = 0.237
             step_z = 0.0
             step_yaw = sample(*ryaw)
         else:
@@ -108,4 +108,5 @@ if __name__ == "__main__":
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert_footcommand_2_global.py"), "--input", args.output, "--output", os.path.join(_PROJ_DIR, "config", "footcommands_global.csv")])  
 
     # execute gen_footstep_scene.py to generate footstep cubes in the MuJoCo scene XML
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])

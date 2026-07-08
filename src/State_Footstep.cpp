@@ -210,6 +210,34 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
                      init_stance.x, init_stance.y, init_stance.z, init_stance.yaw);
         // command_source_ stays null: the global plan drives the planner internally.
     }
+    else if (src == "vision")
+    {
+        // ArUco footstep targets from cmd/aruco_footstep_perception.py.
+        // The perception node publishes pelvis-frame target poses; the planner
+        // keeps a world-frame memory and picks the two nearest feasible
+        // targets at every step boundary (steps in place while none are seen).
+        YAML::Node vn = fs["vision"];
+        isaaclab::FootstepCommand::VisionConfig vc;
+        std::string topic = "rt/footstep_vision";
+        if (vn)
+        {
+            if (vn["topic"]) topic = vn["topic"].as<std::string>();
+            vc.memory_s = yaml_get(vn, "memory", vc.memory_s);
+            vc.max_range = yaml_get(vn, "max_range", vc.max_range);
+            vc.min_forward = yaml_get(vn, "min_forward", vc.min_forward);
+            vc.exclude_radius = yaml_get(vn, "exclude_radius", vc.exclude_radius);
+            vc.side_margin = yaml_get(vn, "side_margin", vc.side_margin);
+        }
+        vision_sub_ = std::make_shared<isaaclab::VisionFootTargetSubscriber>(topic);
+
+        fcfg.start_phase_indicator = default_start_phase;
+        command_ = std::make_unique<isaaclab::FootstepCommand>(fcfg, kin_);
+        command_->enable_vision_mode(vc);
+        State_Footstep::command = command_.get(); // visible to obs terms before env build
+        command_->set_input(default_input_); // timing defaults / station-keep width
+        spdlog::info("[FootCommand] command_source = vision (topic={}, memory={:.1f}s, "
+                     "max_range={:.2f}m)", topic, vc.memory_s, vc.max_range);
+    }
     else
     {
         command_source_ = isaaclab::make_foot_command_source(
@@ -351,6 +379,16 @@ void State_Footstep::enter()
             command_->set_base_pos_world(isaaclab::math::Vec3(p[0], p[1], p[2]));
         };
 
+        // vision mode: forward the latest perception frame (ingested inside
+        // FootstepCommand::compute() with this tick's stance-foot state).
+        auto feed_vision = [&]() {
+            if (!vision_sub_) return;
+            command_->set_vision_clock(std::chrono::duration<double>(
+                clock::now().time_since_epoch()).count());
+            std::vector<isaaclab::VisionTargetPelvis> ts;
+            if (vision_sub_->take(ts)) command_->set_vision_targets(ts);
+        };
+
         // initial reset
         env->robot->update();
         load_full_state(q, qd);
@@ -358,6 +396,7 @@ void State_Footstep::enter()
         command_->robot_quat_w_ = env->robot->data.root_quat_w;
         update_base_from_odom();
         if (command_source_) command_->set_input(command_source_->input());
+        feed_vision();
         command_->reset();
         env->reset();
 
@@ -369,6 +408,7 @@ void State_Footstep::enter()
             command_->robot_quat_w_ = env->robot->data.root_quat_w;
             update_base_from_odom();
             if (command_source_) command_->set_input(command_source_->input());
+            feed_vision();
             command_->compute();
             // advance the (csv) command source when a footstep completes
             if (command_source_ && command_->step_completed()) command_source_->advance();

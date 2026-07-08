@@ -310,6 +310,57 @@ only the marked auto-generated region):
 Then set `command_source: csv_global` in the footstep `deploy.yaml` and run
 `./run_sim.sh`.
 
+### Vision-based footstep targets (ArUco + D435i)
+
+`command_source: vision` closes the loop through the head-mounted D435i instead
+of a pre-planned CSV: every footstep target carries **four 3x3-bit ArUco
+markers** (up to 16 PnP corner points per target), the perception node
+estimates each target's 6-DoF pose, and the controller walks to the two
+nearest feasible targets, re-planned at every step boundary in the stance-foot
+frame (drift-free by construction).
+
+Pipeline:
+
+```text
+gen_aruco_footstep_scene.py ──> scene XML (stones + marker textures)
+                            └─> config/aruco_board.json (marker layout)
+                            └─> printable marker sheets (real world)
+
+aruco_footstep_perception.py:  image ──ArUco/PnP──> T_cam_target
+      (sim: MuJoCo offscreen render of the d435i camera from rt/lowstate+odom;
+       real: pyrealsense2 color stream)
+      T_pelvis_target = FK(q) * T_cam_target   ──DDS──>  rt/footstep_vision
+
+g1_ctrl (State_Footstep, command_source: vision):
+      pelvis frame -> stance-foot frame -> accumulated world-frame memory
+      step boundary: pick 2 nearest feasible targets -> foot command buffer
+```
+
+Quick start (sim):
+
+```bash
+# 1. generate stones + markers + board metadata into the footstep scene
+python3 cmd/gen_aruco_footstep_scene.py
+
+# 2. deploy.yaml: footstep.command_source: vision  (see footstep.vision: ...)
+
+# 3. run simulator + controller
+./run_sim.sh
+
+# 4. run the perception node (separate terminal; --show for a debug window)
+python3 cmd/aruco_footstep_perception.py --network lo --source sim
+```
+
+Real robot: print `unitree_robots/g1/aruco_markers/sheet_target_##.png` at
+100% scale (300 dpi), fix them on the physical stepping targets, and run the
+perception node with `--source realsense` (requires `pyrealsense2`). An
+optional hand-eye correction can be set in `footstep.vision.camera.extrinsic`.
+
+The robot steps in place until targets enter the camera view; targets are
+remembered (`vision.memory`, world frame) while temporarily out of view.
+`cmd/test_aruco_sim_render.py` validates the render->detect->PnP chain against
+MuJoCo ground truth without DDS.
+
 ### Deployment notes / assumptions
 
 * Single robot (`num_envs == 1`); the batched training tensors are reduced to
