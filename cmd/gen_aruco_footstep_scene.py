@@ -15,6 +15,8 @@
 #      cmd/aruco_footstep_perception.py to build PnP object points)
 #   4. Printable per-target sheets (real world) -> <xml_dir>/aruco_markers/
 #      sheet_target_##.png at --dpi (markers at true physical scale).
+#   5. Single multi-page PDF (all targets) -> <xml_dir>/aruco_markers/
+#      footstep_aruco_sheets.pdf (one 2x2 marker layout per A4 page, true scale).
 #
 # Marker ids: target i owns ids [4i, 4i+1, 4i+2, 4i+3]
 #   (front-left, front-right, back-right, back-left in the target frame;
@@ -26,12 +28,18 @@
 #   python3 cmd/gen_aruco_footstep_scene.py --shape box --size 0.1 0.08
 
 import argparse
+import io
 import math
 import os
 import sys
 
 import numpy as np
 import cv2
+from PIL import Image
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import inch, mm
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas as pdf_canvas
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import aruco_common as ac
@@ -115,39 +123,107 @@ def build_marker_geoms(rows, off, marker_size, marker_spread, tex_scale):
     return "\n".join(lines)
 
 
-def write_print_sheets(dictionary, rows, out_dir, marker_size, marker_spread,
-                       quiet_modules, bits, dpi):
-    """Per-target printable sheet: 4 markers at true physical scale."""
-    px_per_m = dpi / 0.0254
+METER = inch / 0.0254   # reportlab points per meter (72 pt/in)
+
+
+def sheet_geometry(marker_size, marker_spread, quiet_modules, bits):
+    """Physical layout of one printable 2x2 marker sheet [m]."""
     scale = (bits + 2 + 2 * quiet_modules) / float(bits + 2)
-    tile = marker_size * scale                    # marker incl. quiet zone [m]
-    side = 2 * marker_spread + tile + 0.02        # canvas side [m] (+1cm margin)
+    tile = marker_size * scale                    # marker incl. quiet zone
+    side = 2 * marker_spread + tile + 0.02        # +1 cm margin each side
+    return scale, tile, side
+
+
+def render_target_sheet(dictionary, target_index, row, marker_size, marker_spread,
+                        quiet_modules, bits, dpi):
+    """Render one printable sheet: 4 markers in a 2x2 layout at true scale."""
+    _, tile, side = sheet_geometry(marker_size, marker_spread, quiet_modules, bits)
+    px_per_m = dpi / 0.0254
     W = int(round(side * px_per_m))
-    canvas_tpl = np.full((W, W), 255, np.uint8)
+    canvas = np.full((W, W), 255, np.uint8)
 
     def to_px(x, y):  # target frame (x fwd = sheet up, y left = sheet left)
         u = int(round(W / 2.0 - y * px_per_m))
         v = int(round(W / 2.0 - x * px_per_m))
         return u, v
 
+    for j, (mx, my) in enumerate(ac.marker_centers(marker_spread)):
+        mid = ac.MARKERS_PER_TARGET * target_index + j
+        img, _ = ac.marker_image(dictionary, mid, modules_px=32,
+                                 quiet_modules=quiet_modules, bits=bits,
+                                 flip_v=False)
+        t = int(round(tile * px_per_m))
+        img = cv2.resize(img, (t, t), interpolation=cv2.INTER_NEAREST)
+        u, v = to_px(mx, my)
+        canvas[v - t // 2:v - t // 2 + t, u - t // 2:u - t // 2 + t] = img
+    # center cross + forward arrow (sheet "up" = target +x = walking dir)
+    u0, v0 = to_px(0, 0)
+    cv2.drawMarker(canvas, (u0, v0), 0, cv2.MARKER_CROSS, 20, 1)
+    cv2.arrowedLine(canvas, (u0, v0 - 30), (u0, v0 - 70), 0, 2, tipLength=0.3)
+    cv2.putText(canvas, f"target {target_index:02d} ({row['foot']})  x->up",
+                (10, W - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, 0, 1)
+    return canvas
+
+
+def write_print_sheets(dictionary, rows, out_dir, marker_size, marker_spread,
+                       quiet_modules, bits, dpi):
+    """Per-target printable PNG sheets: 4 markers at true physical scale."""
     for i, r in enumerate(rows):
-        canvas = canvas_tpl.copy()
-        for j, (mx, my) in enumerate(ac.marker_centers(marker_spread)):
-            mid = ac.MARKERS_PER_TARGET * i + j
-            img, _ = ac.marker_image(dictionary, mid, modules_px=32,
-                                     quiet_modules=quiet_modules, bits=bits,
-                                     flip_v=False)
-            t = int(round(tile * px_per_m))
-            img = cv2.resize(img, (t, t), interpolation=cv2.INTER_NEAREST)
-            u, v = to_px(mx, my)
-            canvas[v - t // 2:v - t // 2 + t, u - t // 2:u - t // 2 + t] = img
-        # center cross + forward arrow (sheet "up" = target +x = walking dir)
-        u0, v0 = to_px(0, 0)
-        cv2.drawMarker(canvas, (u0, v0), 0, cv2.MARKER_CROSS, 20, 1)
-        cv2.arrowedLine(canvas, (u0, v0 - 30), (u0, v0 - 70), 0, 2, tipLength=0.3)
-        cv2.putText(canvas, f"target {i:02d} ({r['foot']})  x->up",
-                    (10, W - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, 0, 1)
-        cv2.imwrite(os.path.join(out_dir, f"sheet_target_{i:02d}.png"), canvas)
+        sheet = render_target_sheet(dictionary, i, r, marker_size, marker_spread,
+                                    quiet_modules, bits, dpi)
+        cv2.imwrite(os.path.join(out_dir, f"sheet_target_{i:02d}.png"), sheet)
+
+
+def _draw_crop_marks(c, x0, y0, side_pts, mark_len=10, gap=3):
+    """Light corner marks just outside the printable marker sheet."""
+    c.setStrokeColorRGB(0.55, 0.55, 0.55)
+    c.setLineWidth(0.4)
+    x1, y1 = x0 + side_pts, y0 + side_pts
+    g = gap
+    m = mark_len
+    # bottom-left
+    c.line(x0 - g - m, y0, x0 - g, y0)
+    c.line(x0, y0 - g - m, x0, y0 - g)
+    # bottom-right
+    c.line(x1 + g, y0, x1 + g + m, y0)
+    c.line(x1, y0 - g - m, x1, y0 - g)
+    # top-left
+    c.line(x0 - g - m, y1, x0 - g, y1)
+    c.line(x0, y1 + g, x0, y1 + g + m)
+    # top-right
+    c.line(x1 + g, y1, x1 + g + m, y1)
+    c.line(x1, y1 + g, x1, y1 + g + m)
+
+
+def write_print_pdf(dictionary, rows, pdf_path, marker_size, marker_spread,
+                    quiet_modules, bits, dpi):
+    """Single PDF on A4: one target per page, marker sheet centered at true scale."""
+    _, _, side = sheet_geometry(marker_size, marker_spread, quiet_modules, bits)
+    sheet_pts = side * METER
+    page_w, page_h = A4
+    x0 = (page_w - sheet_pts) / 2.0
+    y0 = (page_h - sheet_pts) / 2.0
+
+    c = pdf_canvas.Canvas(pdf_path, pagesize=A4)
+    for i, r in enumerate(rows):
+        sheet = render_target_sheet(dictionary, i, r, marker_size, marker_spread,
+                                    quiet_modules, bits, dpi)
+        buf = io.BytesIO()
+        Image.fromarray(sheet, mode="L").save(buf, format="PNG")
+        buf.seek(0)
+        c.drawImage(ImageReader(buf), x0, y0, width=sheet_pts, height=sheet_pts)
+        _draw_crop_marks(c, x0, y0, sheet_pts)
+
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont("Helvetica", 8)
+        c.drawCentredString(
+            page_w / 2.0, 18 * mm,
+            f"target {i:02d} ({r['foot']})  |  marker sheet {side * 1000:.0f} mm square")
+        c.drawCentredString(
+            page_w / 2.0, 11 * mm,
+            "A4 print: 100% / Actual size (do NOT scale to fit). Cut along crop marks.")
+        c.showPage()
+    c.save()
 
 
 if __name__ == "__main__":
@@ -179,8 +255,11 @@ if __name__ == "__main__":
     p.add_argument("--dict-seed", type=int, default=ac.DEFAULT_DICT_SEED)
     p.add_argument("--quiet-modules", type=int, default=ac.DEFAULT_QUIET_MODULES)
     p.add_argument("--dpi", type=int, default=300, help="print sheet resolution")
+    p.add_argument("--pdf", default=None,
+                   help="output PDF path (default: <xml_dir>/aruco_markers/"
+                        "footstep_aruco_sheets.pdf)")
     p.add_argument("--no-sheets", action="store_true",
-                   help="skip printable per-target sheets")
+                   help="skip printable per-target PNG sheets and PDF")
     args = p.parse_args()
 
     rows = read_targets(args.csv)
@@ -234,13 +313,20 @@ if __name__ == "__main__":
                   args.dict_seed, args.marker_size, args.marker_spread,
                   args.quiet_modules)
 
-    # 5) printable sheets
+    # 5) printable sheets + PDF
+    pdf_path = None
     if not args.no_sheets:
         write_print_sheets(dictionary, rows, tex_dir, args.marker_size,
                            args.marker_spread, args.quiet_modules,
                            args.dict_bits, args.dpi)
+        pdf_path = args.pdf or os.path.join(tex_dir, "footstep_aruco_sheets.pdf")
+        write_print_pdf(dictionary, rows, pdf_path, args.marker_size,
+                        args.marker_spread, args.quiet_modules,
+                        args.dict_bits, args.dpi)
 
     print(f"Wrote {n_targets} {args.shape} footstep targets + {n_markers} "
           f"ArUco markers into {args.xml}")
     print(f"  textures/sheets : {tex_dir}")
+    if pdf_path:
+        print(f"  print PDF       : {pdf_path}")
     print(f"  board metadata  : {args.board}")
