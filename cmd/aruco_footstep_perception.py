@@ -21,10 +21,11 @@
 #
 # Frames:
 #   T_pelvis_target = T_pelvis_cam(q) * R_muj_cv * T_cvcam_target
-#   - T_pelvis_cam from MuJoCo FK of the robot model (d435i camera inside
-#     head_link, waist joints from rt/lowstate). For the real robot an optional
-#     hand-eye correction (vision.camera.extrinsic, head_link frame) overrides
-#     the model mount.
+#   - T_pelvis_cam from an analytic FK over the 3 waist joints (rt/lowstate)
+#     up to the HEAD-mounted D435i (numpy only - the mujoco package is NOT
+#     required on the real robot; it is imported lazily for the sim renderer).
+#     An optional hand-eye correction (vision.camera.extrinsic, head_link
+#     frame) overrides the default URDF mount.
 #   - PnP is solved per target on all detected marker corners (up to 16 pts).
 #
 # Usage:
@@ -41,8 +42,6 @@ import time
 
 import numpy as np
 
-os.environ.setdefault("MUJOCO_GL", "egl")
-import mujoco
 import cv2
 import yaml
 
@@ -61,10 +60,8 @@ _WS_DIR = os.path.dirname(_PROJ_DIR)
 DEFAULT_DEPLOY = os.path.join(_PROJ_DIR, "config", "policy", "footstep", "v0",
                               "params", "deploy.yaml")
 DEFAULT_BOARD = os.path.join(_PROJ_DIR, "config", "aruco_board.json")
-ROBOT_XML = os.path.join(_WS_DIR, "unitree_mujoco", "unitree_robots", "g1",
-                         "g1_29dof.xml")
 SCENE_XML = os.path.join(_WS_DIR, "unitree_mujoco", "unitree_robots", "g1",
-                         "scene_29dof_footstep.xml")
+                         "scene_29dof_footstep.xml")  # sim source only
 
 # OpenCV optical frame expressed in the MuJoCo camera frame
 # (x right in both; cv y down = -muj y; cv z forward = -muj z)
@@ -140,52 +137,66 @@ class RobotState:
 
 
 # ---------------------------------------------------------------------------
-# Camera-in-pelvis FK (robot model only, base fixed at identity)
+# Camera-in-pelvis FK (analytic, numpy only - no mujoco needed on the robot)
+#
+# Only the 3 waist joints (SDK 12: yaw, 13: roll, 14: pitch) sit between the
+# pelvis and the HEAD-mounted D435i; everything else is a fixed transform.
+# Chain constants from g1_29dof.xml / the official URDF:
+#   pelvis -Rz(q12)-> (-0.0039635, 0, 0.035) -Rx(q13)->
+#   (0, 0, 0.019) -Ry(q14)-> head_link (0.0039635, 0, -0.054) ->
+#   d435 (0.05366, 0.01753, 0.47387) pitched down 0.8307767 rad.
+# Validated against MuJoCo FK to machine precision over the full waist range.
 # ---------------------------------------------------------------------------
+# camera_link (x fwd, z up) -> MuJoCo cam (-z fwd, y up):
+# columns = mujoco-cam axes expressed in camera_link coords
+R_LINK_MUJCAM = np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0.]]).T
+
+
 class PelvisCamFK:
-    def __init__(self, robot_xml, extrinsic=None):
-        self.model = mujoco.MjModel.from_xml_path(robot_xml)
-        self.data = mujoco.MjData(self.model)
-        self.cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA,
-                                        "d435i")
-        assert self.cam_id >= 0, "d435i camera missing from robot XML"
-        self.head_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY,
-                                         "head_link")
-        assert self.head_id >= 0, "head_link body missing from robot XML"
+    P_ROLL = np.array([-0.0039635, 0.0, 0.035])
+    P_TORSO = np.array([0.0, 0.0, 0.019])
+    P_HEAD = np.array([0.0039635, 0.0, -0.054])
+    D435_POS = np.array([0.05366, 0.01753, 0.47387])   # in head_link frame
+    D435_PITCH = 0.8307767239493009                    # [rad] down
+
+    def __init__(self, extrinsic=None):
         # Optional hand-eye override: D435i camera_link pose in the HEAD_LINK
         # frame ({pos: [x,y,z], rpy: [r,p,y]}, RealSense camera_link convention:
-        # x forward, z up -> mapped to the MuJoCo camera convention here).
-        # Without it, the model camera (official URDF mount) is used.
-        self.ext = None
+        # x forward, z up). Without it, the official URDF mount is used.
         if extrinsic:
-            p = np.array(extrinsic.get("pos", [0, 0, 0]), dtype=float)
+            self.ext_pos = np.array(extrinsic.get("pos", [0, 0, 0]), dtype=float)
             R_link = rpy_to_mat(*[float(v) for v in
                                   extrinsic.get("rpy", [0, 0, 0])])
-            # camera_link (x fwd, z up) -> MuJoCo cam (-z fwd, y up):
-            # columns = mujoco-cam axes expressed in camera_link coords
-            R_link_mujcam = np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0.]]).T
-            self.ext = (p, R_link @ R_link_mujcam)
+        else:
+            self.ext_pos = self.D435_POS
+            R_link = rpy_to_mat(0.0, self.D435_PITCH, 0.0)
+        self.ext_R = R_link @ R_LINK_MUJCAM
 
     def cam_in_pelvis(self, q):
-        self.data.qpos[:] = 0
-        self.data.qpos[3] = 1.0  # identity base quat
-        self.data.qpos[7:7 + NUM_JOINTS] = q
-        mujoco.mj_forward(self.model, self.data)  # cam_xpos needs mj_camlight
-        if self.ext is not None:
-            hp = self.data.xpos[self.head_id]
-            hR = self.data.xmat[self.head_id].reshape(3, 3)
-            return hp + hR @ self.ext[0], hR @ self.ext[1]
-        return (self.data.cam_xpos[self.cam_id].copy(),
-                self.data.cam_xmat[self.cam_id].reshape(3, 3).copy())
+        """(pos, R) of the MuJoCo-convention camera frame in the pelvis frame."""
+        R = rpy_to_mat(0.0, 0.0, float(q[12]))                 # waist yaw
+        p = R @ self.P_ROLL
+        R = R @ rpy_to_mat(float(q[13]), 0.0, 0.0)             # waist roll
+        p = p + R @ self.P_TORSO
+        R = R @ rpy_to_mat(0.0, float(q[14]), 0.0)             # waist pitch
+        p_head = p + R @ self.P_HEAD                           # head_link
+        return p_head + R @ self.ext_pos, R @ self.ext_R
 
 
 # ---------------------------------------------------------------------------
 # Image sources
 # ---------------------------------------------------------------------------
 class SimCamera:
-    """Offscreen render of the d435i camera from the mirrored sim state."""
+    """Offscreen render of the d435i camera from the mirrored sim state.
+
+    The mujoco package is only needed here (sim source) - the real-robot
+    path (realsense) must run without it.
+    """
 
     def __init__(self, scene_xml, state: RobotState, width, height):
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        global mujoco
+        import mujoco
         self.state = state
         self.model = mujoco.MjModel.from_xml_path(scene_xml)
         self.data = mujoco.MjData(self.model)
@@ -332,7 +343,7 @@ def main():
     else:
         cam = RealsenseCamera(state, width, height, fps)
 
-    fk = PelvisCamFK(ROBOT_XML, extrinsic=cam_cfg.get("extrinsic"))
+    fk = PelvisCamFK(extrinsic=cam_cfg.get("extrinsic"))
     est = TargetEstimator(board, min_markers=min_markers)
     pub = ChannelPublisher(topic, String_)
     pub.Init()

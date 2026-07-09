@@ -3,6 +3,20 @@ project(g1_controller)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# --- ONNX Runtime: 빌드 머신 아키텍처에 맞는 배포본 선택 ---
+# x86 개발 머신과 aarch64(Jetson) 배포 머신에서 동일 소스로 빌드되게 함
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+  set(ONNX_DIR ${PROJECT_SOURCE_DIR}/thirdparty/onnxruntime-linux-aarch64-1.22.0)
+else()
+  set(ONNX_DIR ${PROJECT_SOURCE_DIR}/thirdparty/onnxruntime-linux-x64-1.22.0)
+endif()
+
+if(NOT EXISTS ${ONNX_DIR})
+  message(FATAL_ERROR "ONNX Runtime not found: ${ONNX_DIR}\n"
+                      "이 아키텍처(${CMAKE_SYSTEM_PROCESSOR})용 배포본을 thirdparty/에 풀어주세요.")
+endif()
+message(STATUS "Using ONNX Runtime: ${ONNX_DIR}")
+
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(yaml-cpp REQUIRED)
 
@@ -26,14 +40,14 @@ add_compile_definitions(
 include_directories(
   /usr/include/eigen3
   include
-  ${PROJECT_SOURCE_DIR}/thirdparty/onnxruntime-linux-x64-1.22.0/include
+  ${ONNX_DIR}/include
   ${PROJECT_SOURCE_DIR}/include/
 )
 
 link_libraries(
   unitree_sdk2 rt pthread
   libboost_program_options.a libyaml-cpp.a fmt
-  ${PROJECT_SOURCE_DIR}/thirdparty/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so.1.22.0
+  ${ONNX_DIR}/lib/libonnxruntime.so.1.22.0
   pinocchio::pinocchio
 )
 
