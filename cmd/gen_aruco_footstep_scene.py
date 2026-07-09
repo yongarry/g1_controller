@@ -16,7 +16,7 @@
 #   4. Printable per-target sheets (real world) -> <xml_dir>/aruco_markers/
 #      sheet_target_##.png at --dpi (markers at true physical scale).
 #   5. Single multi-page PDF (all targets) -> <xml_dir>/aruco_markers/
-#      footstep_aruco_sheets.pdf (one 2x2 marker layout per A4 page, true scale).
+#      footstep_aruco_sheets.pdf (two 2x2 marker layouts per A4 page, true scale).
 #
 # Marker ids: target i owns ids [4i, 4i+1, 4i+2, 4i+3]
 #   (front-left, front-right, back-right, back-left in the target frame;
@@ -80,6 +80,9 @@ def write_marker_textures(dictionary, n_targets, tex_dir, quiet_modules, bits):
     for mid in range(ac.MARKERS_PER_TARGET * n_targets):
         img, scale = ac.marker_image(dictionary, mid, modules_px=32,
                                      quiet_modules=quiet_modules, bits=bits)
+        # MuJoCo +Z maps PNG row 0 -> +y; rotate CW so sim matches the print
+        # sheet (raw OpenCV bitmap, arrow up = +x_target).
+        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
         cv2.imwrite(os.path.join(tex_dir, f"marker_{mid:03d}.png"), img)
     return scale
 
@@ -162,6 +165,9 @@ def render_target_sheet(dictionary, target_index, row, marker_size, marker_sprea
     cv2.arrowedLine(canvas, (u0, v0 - 30), (u0, v0 - 70), 0, 2, tipLength=0.3)
     cv2.putText(canvas, f"target {target_index:02d} ({row['foot']})  x->up",
                 (10, W - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, 0, 1)
+    # cut boundary along the sheet outer edge (~0.3 mm when printed)
+    border_px = max(2, int(round(0.3 * px_per_m / 1000.0)))
+    cv2.rectangle(canvas, (0, 0), (W - 1, W - 1), 0, border_px)
     return canvas
 
 
@@ -174,13 +180,16 @@ def write_print_sheets(dictionary, rows, out_dir, marker_size, marker_spread,
         cv2.imwrite(os.path.join(out_dir, f"sheet_target_{i:02d}.png"), sheet)
 
 
-def _draw_crop_marks(c, x0, y0, side_pts, mark_len=10, gap=3):
-    """Light corner marks just outside the printable marker sheet."""
-    c.setStrokeColorRGB(0.55, 0.55, 0.55)
-    c.setLineWidth(0.4)
+def _draw_cut_guides(c, x0, y0, side_pts, mark_len=10, gap=3):
+    """Cut boundary on the sheet edge + corner ticks extending outside."""
     x1, y1 = x0 + side_pts, y0 + side_pts
-    g = gap
-    m = mark_len
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(0.6)
+    c.rect(x0, y0, side_pts, side_pts, stroke=1, fill=0)
+
+    c.setStrokeColorRGB(0.45, 0.45, 0.45)
+    c.setLineWidth(0.4)
+    g, m = gap, mark_len
     # bottom-left
     c.line(x0 - g - m, y0, x0 - g, y0)
     c.line(x0, y0 - g - m, x0, y0 - g)
@@ -195,33 +204,63 @@ def _draw_crop_marks(c, x0, y0, side_pts, mark_len=10, gap=3):
     c.line(x1, y1 + g, x1, y1 + g + m)
 
 
+def _draw_page_split_guide(c, x0, y_mid, sheet_pts):
+    """Dashed line between two stacked sheets on the same A4 page."""
+    c.setStrokeColorRGB(0.35, 0.35, 0.35)
+    c.setLineWidth(0.35)
+    c.setDash(4, 4)
+    c.line(x0 - 4 * mm, y_mid, x0 + sheet_pts + 4 * mm, y_mid)
+    c.setDash()
+
+
+def _draw_sheet_on_page(c, dictionary, target_index, row, x0, y0, sheet_pts,
+                        marker_size, marker_spread, quiet_modules, bits, dpi):
+    sheet = render_target_sheet(dictionary, target_index, row, marker_size,
+                                marker_spread, quiet_modules, bits, dpi)
+    buf = io.BytesIO()
+    Image.fromarray(sheet, mode="L").save(buf, format="PNG")
+    buf.seek(0)
+    c.drawImage(ImageReader(buf), x0, y0, width=sheet_pts, height=sheet_pts)
+    _draw_cut_guides(c, x0, y0, sheet_pts)
+
+
 def write_print_pdf(dictionary, rows, pdf_path, marker_size, marker_spread,
                     quiet_modules, bits, dpi):
-    """Single PDF on A4: one target per page, marker sheet centered at true scale."""
+    """Single PDF on A4: two targets per page (stacked), true physical scale."""
     _, _, side = sheet_geometry(marker_size, marker_spread, quiet_modules, bits)
     sheet_pts = side * METER
     page_w, page_h = A4
     x0 = (page_w - sheet_pts) / 2.0
-    y0 = (page_h - sheet_pts) / 2.0
+    gap_pts = 3 * mm
+    slack = page_h - 2 * sheet_pts - gap_pts
+    y_bottom = max(10 * mm, slack / 2.0)
+    y_top = y_bottom + sheet_pts + gap_pts
 
     c = pdf_canvas.Canvas(pdf_path, pagesize=A4)
-    for i, r in enumerate(rows):
-        sheet = render_target_sheet(dictionary, i, r, marker_size, marker_spread,
-                                    quiet_modules, bits, dpi)
-        buf = io.BytesIO()
-        Image.fromarray(sheet, mode="L").save(buf, format="PNG")
-        buf.seek(0)
-        c.drawImage(ImageReader(buf), x0, y0, width=sheet_pts, height=sheet_pts)
-        _draw_crop_marks(c, x0, y0, sheet_pts)
+    for page_start in range(0, len(rows), 2):
+        page_rows = rows[page_start:page_start + 2]
+        if len(page_rows) == 2:
+            positions = [(x0, y_bottom), (x0, y_top)]
+        else:
+            y_single = (page_h - sheet_pts) / 2.0
+            positions = [(x0, y_single)]
+
+        for j, r in enumerate(page_rows):
+            i = page_start + j
+            _draw_sheet_on_page(c, dictionary, i, r, positions[j][0], positions[j][1],
+                                sheet_pts, marker_size, marker_spread,
+                                quiet_modules, bits, dpi)
+
+        if len(page_rows) == 2:
+            y_mid = y_bottom + sheet_pts + gap_pts / 2.0
+            _draw_page_split_guide(c, x0, y_mid, sheet_pts)
 
         c.setFillColorRGB(0, 0, 0)
-        c.setFont("Helvetica", 8)
+        c.setFont("Helvetica", 7)
         c.drawCentredString(
-            page_w / 2.0, 18 * mm,
-            f"target {i:02d} ({r['foot']})  |  marker sheet {side * 1000:.0f} mm square")
-        c.drawCentredString(
-            page_w / 2.0, 11 * mm,
-            "A4 print: 100% / Actual size (do NOT scale to fit). Cut along crop marks.")
+            page_w / 2.0, 6 * mm,
+            f"A4: 100% / Actual size  |  sheet {side * 1000:.0f} mm  |  "
+            "cut along solid border (dashed line = page split)")
         c.showPage()
     c.save()
 

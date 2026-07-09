@@ -20,9 +20,12 @@
 #   j=0: front-left  (+c, +c)      j=1: front-right (+c, -c)
 #   j=2: back-right  (-c, -c)      j=3: back-left   (-c, +c)
 # where c = marker_spread and marker black-border side length = marker_size.
-# Every marker is axis-aligned with the target frame: image "up" = +y_target,
-# image "right" = +x_target (the cv2.aruco.Board convention: object points on
-# the z=0 plane, x right, y up).
+# Every marker is axis-aligned with the target frame.  On the printable sheet
+# (+x = arrow up, +y = left) and on a correctly mounted real target:
+#   image-up   = +x_target  (OpenCV row 0 toward walking direction)
+#   image-left = +y_target
+# MuJoCo sim textures are pre-rotated 90° CW in gen_aruco_footstep_scene.py so
+# the offscreen render matches the same layout (see write_marker_textures).
 #
 # OpenCV canonical marker corners (detectMarkers order) are
 #   [top-left, top-right, bottom-right, bottom-left]
@@ -54,11 +57,9 @@ DEFAULT_QUIET_MODULES = 1      # white quiet-zone width in marker modules
 MARKERS_PER_TARGET = 4
 
 # If True, marker texture PNGs are flipped vertically before being written.
-# MuJoCo renders a 2d texture on a box top face with the PNG appearing
-# unmirrored when viewed from +z (image row 0 toward +y), so no pre-flip is
-# needed; flipping would MIRROR the marker and break detection. (Determined
-# empirically with a top-down render probe; validated end-to-end by
-# cmd/test_aruco_sim_render.py.)
+# MuJoCo +Z face maps PNG row 0 toward +y; a further 90° CW rotation is
+# applied in write_marker_textures() so sim matches the printable sheet layout
+# (image-up = +x_target).  Validated by cmd/test_aruco_sim_render.py.
 MARKER_TEXTURE_FLIP_V = False
 
 
@@ -105,15 +106,15 @@ def marker_object_points(center_xy, marker_size=DEFAULT_MARKER_SIZE):
 
     Order matches cv2.aruco detectMarkers corners:
       [top-left, top-right, bottom-right, bottom-left]
-    with image-up = +y_target, image-right = +x_target.
+    with image-up = +x_target, image-left = +y_target (print-sheet layout).
     """
     cx, cy = center_xy
     h = 0.5 * float(marker_size)
     return np.array([
-        [cx - h, cy + h, 0.0],   # top-left
-        [cx + h, cy + h, 0.0],   # top-right
-        [cx + h, cy - h, 0.0],   # bottom-right
-        [cx - h, cy - h, 0.0],   # bottom-left
+        [cx + h, cy + h, 0.0],   # top-left    (+x, +y)
+        [cx + h, cy - h, 0.0],   # top-right   (+x, -y)
+        [cx - h, cy - h, 0.0],   # bottom-right (-x, -y)
+        [cx - h, cy + h, 0.0],   # bottom-left  (-x, +y)
     ], dtype=np.float64)
 
 

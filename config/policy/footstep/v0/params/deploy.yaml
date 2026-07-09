@@ -192,7 +192,7 @@ footstep:
       source: sim         # sim (offscreen MuJoCo render) | realsense (D435i)
       width: 1280         # 3cm markers need 720p to detect beyond ~1m
       height: 720
-      fps: 30
+      fps: 30              # D435 on USB2 only supports 720p up to 15 fps; use USB3
       # Optional hand-eye correction for the real robot: D435i camera_link
       # pose in the HEAD_LINK frame (RealSense convention, x forward, z up).
       # Defaults to the URDF/MJCF head mount when omitted. The values below
