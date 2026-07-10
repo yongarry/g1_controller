@@ -226,12 +226,52 @@ class SimCamera:
 
 
 class RealsenseCamera:
+    """D435i color stream. Works on USB 3 and USB 2.x: librealsense only
+    reports the profiles the current connection can actually stream, so the
+    requested (width, height, fps) is matched against that list and falls
+    back automatically (e.g. on USB 2.1 the color camera cannot do
+    1280x720@30 - typically 1280x720@6 or 640x480@30 are available).
+    Intrinsics always come from the profile that actually started."""
+
+    MIN_FPS = 6  # planner samples per step (~1 s), so >=6 Hz is sufficient
+
     def __init__(self, state: RobotState, width, height, fps):
         import pyrealsense2 as rs
         self.state = state
+
+        ctx = rs.context()
+        devs = ctx.query_devices()
+        if len(devs) == 0:
+            raise RuntimeError("no RealSense device connected")
+        dev = devs[0]
+        try:
+            usb = dev.get_info(rs.camera_info.usb_type_descriptor)
+        except Exception:
+            usb = "unknown"
+
+        # color profiles the CURRENT connection (USB2/USB3) can stream
+        color = next(s for s in dev.query_sensors()
+                     if s.get_info(rs.camera_info.name) == "RGB Camera")
+        modes = sorted(
+            {(p.as_video_stream_profile().width(),
+              p.as_video_stream_profile().height(), p.fps())
+             for p in color.get_stream_profiles()
+             if p.stream_type() == rs.stream.color
+             and p.format() == rs.format.bgr8},
+            key=lambda m: (m[0] * m[1], m[2]), reverse=True)
+
+        w, h, f = self._pick_mode(modes, width, height, fps)
+        if (w, h, f) != (width, height, fps):
+            print(f"[perception] RealSense on USB {usb}: requested "
+                  f"{width}x{height}@{fps} unavailable, using {w}x{h}@{f}. "
+                  f"(Lower resolution shortens the marker detection range - "
+                  f"set vision.camera width/height to pick a mode explicitly.)")
+        else:
+            print(f"[perception] RealSense on USB {usb}: {w}x{h}@{f}")
+
         self.pipe = rs.pipeline()
         cfg = rs.config()
-        cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+        cfg.enable_stream(rs.stream.color, w, h, rs.format.bgr8, f)
         prof = self.pipe.start(cfg)
         intr = prof.get_stream(rs.stream.color) \
                    .as_video_stream_profile().get_intrinsics()
@@ -240,6 +280,27 @@ class RealsenseCamera:
         self.dist = np.array(intr.coeffs, dtype=np.float64)
         if not np.any(self.dist):
             self.dist = None
+
+    @classmethod
+    def _pick_mode(cls, modes, width, height, fps):
+        """Requested mode if streamable; else the same resolution at the
+        highest available fps; else (among modes with fps >= MIN_FPS, falling
+        back to all modes) the smallest resolution that still covers the
+        requested pixel area - preserving detection range without wasting
+        CPU - or the largest one available if none covers it."""
+        if not modes:
+            raise RuntimeError("RealSense reports no BGR8 color profiles")
+        if (width, height, fps) in modes:
+            return width, height, fps
+        same_res = [m for m in modes if m[0] == width and m[1] == height]
+        if same_res:
+            return max(same_res, key=lambda m: m[2])
+        pool = [m for m in modes if m[2] >= cls.MIN_FPS] or list(modes)
+        req_area = width * height
+        covering = [m for m in pool if m[0] * m[1] >= req_area]
+        if covering:
+            return min(covering, key=lambda m: (m[0] * m[1], -m[2]))
+        return max(pool, key=lambda m: (m[0] * m[1], m[2]))
 
     def read(self):
         frames = self.pipe.wait_for_frames()

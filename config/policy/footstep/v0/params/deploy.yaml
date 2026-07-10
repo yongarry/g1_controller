@@ -190,6 +190,11 @@ footstep:
     max_reproj_px: 2.0    # discard estimates with a larger mean reproj error
     camera:
       source: sim         # sim (offscreen MuJoCo render) | realsense (D435i)
+      # Requested color mode. On USB 2.x connections the D435i cannot stream
+      # every mode; the node matches this against the modes the connection
+      # actually supports and falls back automatically (same resolution at a
+      # lower fps first, e.g. 1280x720@10 - low fps is fine, the planner only
+      # samples once per step). Set 640x480 here to prefer 30 fps on USB 2.
       width: 1280         # 3cm markers need 720p to detect beyond ~1m
       height: 720
       fps: 30              # D435 on USB2 only supports 720p up to 15 fps; use USB3
