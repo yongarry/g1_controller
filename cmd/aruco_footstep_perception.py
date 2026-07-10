@@ -260,6 +260,9 @@ class RealsenseCamera:
              and p.format() == rs.format.bgr8},
             key=lambda m: (m[0] * m[1], m[2]), reverse=True)
 
+        dev.hardware_reset()      
+        time.sleep(5)  
+
         w, h, f = self._pick_mode(modes, width, height, fps)
         if (w, h, f) != (width, height, fps):
             print(f"[perception] RealSense on USB {usb}: requested "
