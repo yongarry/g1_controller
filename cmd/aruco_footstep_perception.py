@@ -175,30 +175,7 @@ class RealsenseCamera:
     def __init__(self, width, height, fps):
         import pyrealsense2 as rs
 
-        ctx = rs.context()
-        devs = ctx.query_devices()
-        if len(devs) == 0:
-            raise RuntimeError("no RealSense device connected")
-        dev = devs[0]
-        try:
-            usb = dev.get_info(rs.camera_info.usb_type_descriptor)
-        except Exception:
-            usb = "unknown"
-
-        # color profiles the CURRENT connection (USB2/USB3) can stream
-        color = next(s for s in dev.query_sensors()
-                     if s.get_info(rs.camera_info.name) == "RGB Camera")
-        modes = sorted(
-            {(p.as_video_stream_profile().width(),
-              p.as_video_stream_profile().height(), p.fps())
-             for p in color.get_stream_profiles()
-             if p.stream_type() == rs.stream.color
-             and p.format() == rs.format.bgr8},
-            key=lambda m: (m[0] * m[1], m[2]), reverse=True)
-
-        dev.hardware_reset()      
-        time.sleep(5)  
-
+        usb, modes = self._probe(rs)
         w, h, f = self._pick_mode(modes, width, height, fps)
         if (w, h, f) != (width, height, fps):
             print(f"[perception] RealSense on USB {usb}: requested "
@@ -208,10 +185,34 @@ class RealsenseCamera:
         else:
             print(f"[perception] RealSense on USB {usb}: {w}x{h}@{f}")
 
-        self.pipe = rs.pipeline()
-        cfg = rs.config()
-        cfg.enable_stream(rs.stream.color, w, h, rs.format.bgr8, f)
-        prof = self.pipe.start(cfg)
+        # Start color stream. On EBUSY (another process holding V4L2),
+        # hardware-reset the device, wait for USB re-enumeration, then retry.
+        last_err = None
+        for attempt in range(3):
+            self.pipe = rs.pipeline()
+            cfg = rs.config()
+            cfg.enable_stream(rs.stream.color, w, h, rs.format.bgr8, f)
+            try:
+                prof = self.pipe.start(cfg)
+                break
+            except RuntimeError as e:
+                last_err = e
+                msg = str(e).lower()
+                busy = ("busy" in msg) or ("errno=16" in msg)
+                try:
+                    self.pipe.stop()
+                except Exception:
+                    pass
+                if not busy or attempt == 2:
+                    raise
+                print(f"[perception] RealSense busy, hardware_reset "
+                      f"(attempt {attempt + 1}/3) ...")
+                self._hardware_reset(rs)
+                usb, modes = self._probe(rs)
+                w, h, f = self._pick_mode(modes, width, height, fps)
+        else:
+            raise last_err
+
         intr = prof.get_stream(rs.stream.color) \
                    .as_video_stream_profile().get_intrinsics()
         self.K = np.array([[intr.fx, 0, intr.ppx],
@@ -219,6 +220,54 @@ class RealsenseCamera:
         self.dist = np.array(intr.coeffs, dtype=np.float64)
         if not np.any(self.dist):
             self.dist = None
+
+    @staticmethod
+    def _probe(rs):
+        """Return (usb_descriptor, color BGR8 modes) for the first device."""
+        ctx = rs.context()
+        devs = ctx.query_devices()
+        if len(devs) == 0:
+            raise RuntimeError("no RealSense device connected")
+        dev = devs[0]
+        try:
+            usb = dev.get_info(rs.camera_info.usb_type_descriptor)
+        except Exception:
+            usb = "unknown"
+        color = next(s for s in dev.query_sensors()
+                     if s.get_info(rs.camera_info.name) == "RGB Camera")
+        modes = sorted(
+            {(p.as_video_stream_profile().width(),
+              p.as_video_stream_profile().height(), p.fps())
+             for p in color.get_stream_profiles()
+             if p.stream_type() == rs.stream.color
+             and p.format() == rs.format.bgr8},
+            key=lambda m: (m[0] * m[1], m[2]), reverse=True)
+        return usb, modes
+
+    @staticmethod
+    def _hardware_reset(rs, timeout=15.0):
+        """Reset the first RealSense and block until it reappears on USB."""
+        ctx = rs.context()
+        devs = ctx.query_devices()
+        if len(devs) == 0:
+            raise RuntimeError("no RealSense device connected (reset)")
+        serial = devs[0].get_info(rs.camera_info.serial_number)
+        print(f"[perception] resetting RealSense sn={serial} ...")
+        devs[0].hardware_reset()
+        t0 = time.time()
+        time.sleep(2.0)  # disconnect takes a moment
+        while time.time() - t0 < timeout:
+            ctx = rs.context()
+            for d in ctx.query_devices():
+                try:
+                    if d.get_info(rs.camera_info.serial_number) == serial:
+                        time.sleep(1.0)  # settle before streaming
+                        return
+                except Exception:
+                    pass
+            time.sleep(0.5)
+        raise RuntimeError(
+            f"RealSense sn={serial} did not reappear within {timeout:.0f}s")
 
     @classmethod
     def _pick_mode(cls, modes, width, height, fps):
