@@ -26,6 +26,7 @@
 #   python3 cmd/gen_aruco_footstep_scene.py
 #   python3 cmd/gen_aruco_footstep_scene.py --marker-size 0.03 --marker-spread 0.05
 #   python3 cmd/gen_aruco_footstep_scene.py --shape box --size 0.1 0.08
+#   python3 cmd/gen_aruco_footstep_scene.py --shape box --size 0.1 0.08 0.02
 
 import argparse
 import io
@@ -273,8 +274,11 @@ if __name__ == "__main__":
     p.add_argument("--board", default=DEFAULT_BOARD,
                    help="output board metadata JSON (read by the perception node)")
     p.add_argument("--shape", choices=["box", "cylinder"], default="box")
-    p.add_argument("--size", nargs=2, type=float, default=[0.1, 10.06],
-                   metavar=("HX", "HY"))
+    p.add_argument("--size", nargs="+", type=float, default=[0.125, 0.06],
+                   metavar="H",
+                   help="HX HY [HZ]: box half-extents [m] (cylinder: radius=HX). "
+                        "If HZ given, vertical half-size is fixed (top at pos_z); "
+                        "otherwise height is from ground to pos_z")
     p.add_argument("--plane-margin", type=float, default=3.0)
     p.add_argument("--platform-size", nargs=2, type=float,
                    default=list(DEFAULT_PLATFORM_SIZE), metavar=("HX", "HY"))
@@ -300,6 +304,8 @@ if __name__ == "__main__":
     p.add_argument("--no-sheets", action="store_true",
                    help="skip printable per-target PNG sheets and PDF")
     args = p.parse_args()
+    if len(args.size) not in (2, 3):
+        p.error("--size expects HX HY [HZ] (2 or 3 values)")
 
     rows = read_targets(args.csv)
     n_targets = len(rows)

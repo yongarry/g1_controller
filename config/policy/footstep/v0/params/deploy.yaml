@@ -22,7 +22,7 @@ default_joint_pos: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
 # --- upper body (held at default by State_Footstep), SDK indices 12..28 ---
 upper_body:
   joint_ids_map: [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
-  default_joint_pos: [0.0, 0.0, 0.0,
+  default_joint_pos: [0.0, 0.0, 0.2,
                       0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
                       0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
   stiffness: [200.0, 200.0, 200.0,
@@ -184,7 +184,8 @@ footstep:
     min_forward: -0.10    # [m] stance-frame x cutoff (targets behind are ignored)
     exclude_radius: 0.12  # [m] targets under either foot are excluded
     side_margin: 0.04     # [m] swing-side feasibility margin
-    # ---- read by cmd/aruco_footstep_perception.py only ----
+    # ---- read by cmd/aruco_footstep_perception.py (except camera.extrinsic,
+    #      which the controller uses for the camera->pelvis transform) ----
     board: config/aruco_board.json  # written by gen_aruco_footstep_scene.py
     min_markers: 2        # min detected markers per target for a PnP solve
     max_reproj_px: 2.0    # discard estimates with a larger mean reproj error
@@ -198,10 +199,11 @@ footstep:
       width: 1280         # 3cm markers need 720p to detect beyond ~1m
       height: 720
       fps: 30              # D435 on USB2 only supports 720p up to 15 fps; use USB3
-      # Optional hand-eye correction for the real robot: D435i camera_link
-      # pose in the HEAD_LINK frame (RealSense convention, x forward, z up).
-      # Defaults to the URDF/MJCF head mount when omitted. The values below
-      # are that default; rev_1_0 hardware sits 1 cm higher (z: 0.48387).
+      # Optional hand-eye correction (read by the CONTROLLER, which now owns
+      # the camera->pelvis transform): D435i camera_link pose in the HEAD_LINK
+      # frame (RealSense convention, x forward, z up). Defaults to the
+      # URDF/MJCF head mount when omitted. The values below are that default;
+      # rev_1_0 hardware sits 1 cm higher (z: 0.48387).
       # extrinsic:
       #   pos: [0.05366, 0.01753, 0.47387]
       #   rpy: [0.0, 0.8307767239, 0.0]

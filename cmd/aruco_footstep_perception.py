@@ -4,29 +4,27 @@
 # ArUco footstep-target perception node for the G1 footstep controller.
 #
 # Estimates the pose of ArUco-tagged footstep targets (4 markers per target,
-# see cmd/gen_aruco_footstep_scene.py) with the head D435i and publishes them
-# in the PELVIS frame over DDS as a JSON payload (std_msgs String on
-# `rt/footstep_vision` by default). The C++ controller (command_source:
-# "vision" in deploy.yaml) converts them to the stance-foot frame, keeps a
-# short world-frame memory, picks the two nearest feasible targets, and feeds
-# the footstep planner.
+# see cmd/gen_aruco_footstep_scene.py) with the head D435i and publishes the
+# RAW CAMERA-FRAME poses over DDS as a JSON payload (std_msgs String on
+# `rt/footstep_vision` by default). This node does NO robot kinematics: the
+# C++ controller (command_source: "vision" in deploy.yaml) transforms the
+# targets camera -> pelvis (waist FK, D435PelvisCamTransform) -> stance-foot
+# frame, keeps a short world-frame memory, picks the two nearest feasible
+# targets, and feeds the footstep planner.
 #
 # Image sources (--source / deploy.yaml footstep.vision.camera.source):
-#   sim       - subscribes rt/lowstate (+ rt/odommodestate) from unitree_mujoco,
+#   sim       - subscribes rt/lowstate + rt/odommodestate from unitree_mujoco,
 #               mirrors the robot state into a local MuJoCo copy of the scene,
 #               and renders the "d435i" camera offscreen. Ground-truth-free:
 #               the detection pipeline is identical to the real one.
-#   realsense - Intel RealSense D435i color stream via pyrealsense2
-#               (factory intrinsics).
+#   realsense - Intel RealSense D435i color stream via pyrealsense2 (factory
+#               intrinsics). Needs NO DDS robot state and NO mujoco package:
+#               on the robot PC the dependencies are only numpy, opencv
+#               (contrib), pyrealsense2, pyyaml and unitree_sdk2py.
 #
-# Frames:
-#   T_pelvis_target = T_pelvis_cam(q) * R_muj_cv * T_cvcam_target
-#   - T_pelvis_cam from an analytic FK over the 3 waist joints (rt/lowstate)
-#     up to the HEAD-mounted D435i (numpy only - the mujoco package is NOT
-#     required on the real robot; it is imported lazily for the sim renderer).
-#     An optional hand-eye correction (vision.camera.extrinsic, head_link
-#     frame) overrides the default URDF mount.
-#   - PnP is solved per target on all detected marker corners (up to 16 pts).
+# Frames: published poses are T_cam_target in the D435i COLOR OPTICAL frame
+# (OpenCV convention: x right, y down, z forward - the direct solvePnP
+# output). PnP is solved per target on all detected marker corners (<=16 pts).
 #
 # Usage:
 #   python3 cmd/aruco_footstep_perception.py                     # sim, iface lo
@@ -63,20 +61,7 @@ DEFAULT_BOARD = os.path.join(_PROJ_DIR, "config", "aruco_board.json")
 SCENE_XML = os.path.join(_WS_DIR, "unitree_mujoco", "unitree_robots", "g1",
                          "scene_29dof_footstep.xml")  # sim source only
 
-# OpenCV optical frame expressed in the MuJoCo camera frame
-# (x right in both; cv y down = -muj y; cv z forward = -muj z)
-R_MUJ_CV = np.diag([1.0, -1.0, -1.0])
-
 NUM_JOINTS = 29
-
-
-def rpy_to_mat(r, p, y):
-    cr, sr = math.cos(r), math.sin(r)
-    cp, sp = math.cos(p), math.sin(p)
-    cy, sy = math.cos(y), math.sin(y)
-    return (np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]]) @
-            np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]]) @
-            np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]]))
 
 
 def mat_to_quat_wxyz(R):
@@ -137,53 +122,6 @@ class RobotState:
 
 
 # ---------------------------------------------------------------------------
-# Camera-in-pelvis FK (analytic, numpy only - no mujoco needed on the robot)
-#
-# Only the 3 waist joints (SDK 12: yaw, 13: roll, 14: pitch) sit between the
-# pelvis and the HEAD-mounted D435i; everything else is a fixed transform.
-# Chain constants from g1_29dof.xml / the official URDF:
-#   pelvis -Rz(q12)-> (-0.0039635, 0, 0.035) -Rx(q13)->
-#   (0, 0, 0.019) -Ry(q14)-> head_link (0.0039635, 0, -0.054) ->
-#   d435 (0.05366, 0.01753, 0.47387) pitched down 0.8307767 rad.
-# Validated against MuJoCo FK to machine precision over the full waist range.
-# ---------------------------------------------------------------------------
-# camera_link (x fwd, z up) -> MuJoCo cam (-z fwd, y up):
-# columns = mujoco-cam axes expressed in camera_link coords
-R_LINK_MUJCAM = np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0.]]).T
-
-
-class PelvisCamFK:
-    P_ROLL = np.array([-0.0039635, 0.0, 0.035])
-    P_TORSO = np.array([0.0, 0.0, 0.019])
-    P_HEAD = np.array([0.0039635, 0.0, -0.054])
-    D435_POS = np.array([0.05366, 0.01753, 0.47387])   # in head_link frame
-    D435_PITCH = 0.8307767239493009                    # [rad] down
-
-    def __init__(self, extrinsic=None):
-        # Optional hand-eye override: D435i camera_link pose in the HEAD_LINK
-        # frame ({pos: [x,y,z], rpy: [r,p,y]}, RealSense camera_link convention:
-        # x forward, z up). Without it, the official URDF mount is used.
-        if extrinsic:
-            self.ext_pos = np.array(extrinsic.get("pos", [0, 0, 0]), dtype=float)
-            R_link = rpy_to_mat(*[float(v) for v in
-                                  extrinsic.get("rpy", [0, 0, 0])])
-        else:
-            self.ext_pos = self.D435_POS
-            R_link = rpy_to_mat(0.0, self.D435_PITCH, 0.0)
-        self.ext_R = R_link @ R_LINK_MUJCAM
-
-    def cam_in_pelvis(self, q):
-        """(pos, R) of the MuJoCo-convention camera frame in the pelvis frame."""
-        R = rpy_to_mat(0.0, 0.0, float(q[12]))                 # waist yaw
-        p = R @ self.P_ROLL
-        R = R @ rpy_to_mat(float(q[13]), 0.0, 0.0)             # waist roll
-        p = p + R @ self.P_TORSO
-        R = R @ rpy_to_mat(0.0, float(q[14]), 0.0)             # waist pitch
-        p_head = p + R @ self.P_HEAD                           # head_link
-        return p_head + R @ self.ext_pos, R @ self.ext_R
-
-
-# ---------------------------------------------------------------------------
 # Image sources
 # ---------------------------------------------------------------------------
 class SimCamera:
@@ -215,14 +153,13 @@ class SimCamera:
 
     def read(self):
         s = self.state
-        q = s.q.copy()
         self.data.qpos[0:3] = s.base_pos
         self.data.qpos[3:7] = s.quat
-        self.data.qpos[7:7 + NUM_JOINTS] = q
+        self.data.qpos[7:7 + NUM_JOINTS] = s.q
         mujoco.mj_forward(self.model, self.data)
         self.renderer.update_scene(self.data, camera="d435i")
         rgb = self.renderer.render()
-        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), q
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
 
 class RealsenseCamera:
@@ -235,9 +172,8 @@ class RealsenseCamera:
 
     MIN_FPS = 6  # planner samples per step (~1 s), so >=6 Hz is sufficient
 
-    def __init__(self, state: RobotState, width, height, fps):
+    def __init__(self, width, height, fps):
         import pyrealsense2 as rs
-        self.state = state
 
         ctx = rs.context()
         devs = ctx.query_devices()
@@ -308,7 +244,7 @@ class RealsenseCamera:
     def read(self):
         frames = self.pipe.wait_for_frames()
         img = np.asanyarray(frames.get_color_frame().get_data())
-        return img, self.state.q.copy()
+        return img
 
 
 # ---------------------------------------------------------------------------
@@ -395,19 +331,19 @@ def main():
           f"({len(board['targets'])} targets), source={source}, topic={topic}")
 
     ChannelFactoryInitialize(args.domain, args.network)
-    state = RobotState(want_odom=(source == "sim"))
-    print("[perception] waiting for rt/lowstate"
-          + (" + rt/odommodestate ..." if source == "sim" else " ..."))
-    if not state.wait(need_odom=(source == "sim")):
-        print("[perception] ERROR: no robot state received", file=sys.stderr)
-        sys.exit(1)
-
     if source == "sim":
+        # robot state (rt/lowstate + rt/odommodestate) is only needed to
+        # mirror the sim pose for rendering; the realsense path is DDS-
+        # publish-only.
+        state = RobotState(want_odom=True)
+        print("[perception] waiting for rt/lowstate + rt/odommodestate ...")
+        if not state.wait(need_odom=True):
+            print("[perception] ERROR: no robot state received", file=sys.stderr)
+            sys.exit(1)
         cam = SimCamera(SCENE_XML, state, width, height)
     else:
-        cam = RealsenseCamera(state, width, height, fps)
+        cam = RealsenseCamera(width, height, fps)
 
-    fk = PelvisCamFK(extrinsic=cam_cfg.get("extrinsic"))
     est = TargetEstimator(board, min_markers=min_markers)
     pub = ChannelPublisher(topic, String_)
     pub.Init()
@@ -417,30 +353,27 @@ def main():
     t_last_log = time.time()
     while True:
         t0 = time.time()
-        img, q = cam.read()
+        img = cam.read()
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         vis = img if args.show else None
 
-        cam_p, cam_R = fk.cam_in_pelvis(q)   # MuJoCo cam frame in pelvis
-        R_pc = cam_R @ R_MUJ_CV              # cv optical frame in pelvis
-
+        # raw camera-optical-frame poses (solvePnP output); the controller
+        # does the camera -> pelvis -> stance-foot transforms itself.
         targets = []
         for e in est.estimate(gray, cam.K, cam.dist, vis):
             if e["err"] > max_reproj:
                 continue
-            tp = R_pc @ e["t"] + cam_p       # target origin in pelvis
-            tR = R_pc @ e["R"]               # target axes in pelvis
-            qt = mat_to_quat_wxyz(tR)
+            qt = mat_to_quat_wxyz(e["R"])
             targets.append({
                 "id": int(e["index"]),
-                "pos": [round(float(v), 5) for v in tp],
+                "pos": [round(float(v), 5) for v in e["t"]],
                 "quat": [round(float(v), 6) for v in qt],
                 "nmk": int(e["nmk"]),
                 "err": round(e["err"], 3),
             })
 
-        msg = json.dumps({"stamp": time.time(), "targets": targets},
-                         separators=(",", ":"))
+        msg = json.dumps({"stamp": time.time(), "frame": "camera_optical",
+                          "targets": targets}, separators=(",", ":"))
         pub.Write(String_(data=msg))
         n_pub += 1
 

@@ -34,7 +34,7 @@
 #include "isaaclab/envs/mdp/commands/vrp_generator.h"
 #include "isaaclab/envs/mdp/commands/preview_controller.h"
 #include "isaaclab/envs/mdp/commands/foot_command_source.h" // FootCommandInput
-#include "isaaclab/envs/mdp/commands/vision_foot_target_source.h" // VisionTargetPelvis
+#include "isaaclab/envs/mdp/commands/vision_foot_target_source.h" // VisionTarget
 
 namespace isaaclab
 {
@@ -131,9 +131,11 @@ public:
     bool global_mode() const { return global_mode_; }
 
     // --- vision command mode (ArUco footstep targets) ------------------------
-    // Targets are measured by cmd/aruco_footstep_perception.py in the PELVIS
-    // frame and fed in every tick via set_vision_targets(). They are converted
-    // to the accumulated world frame (anchored at the initial stance foot) and
+    // Targets are measured by cmd/aruco_footstep_perception.py in the camera
+    // optical frame; State_Footstep converts them to the PELVIS frame (waist
+    // FK, D435PelvisCamTransform) and feeds them in every tick via
+    // set_vision_targets(). Here they are converted further to the
+    // accumulated world frame (anchored at the initial stance foot) and
     // kept in a short id-keyed memory, so a target stays plannable while it is
     // temporarily outside the camera view. At every step boundary the planner
     // picks the two nearest feasible targets (slot 0 on the upcoming swing-foot
@@ -158,9 +160,10 @@ public:
     // Monotonic clock for the target memory (call every control tick).
     void set_vision_clock(double now_s) { vision_now_ = now_s; }
 
-    // Latest perception frame (pelvis frame); ingested inside compute() where
-    // the stance-foot state of the same tick is available.
-    void set_vision_targets(const std::vector<VisionTargetPelvis>& ts)
+    // Latest perception frame, already converted to the PELVIS frame by the
+    // caller; ingested inside compute() where the stance-foot state of the
+    // same tick is available.
+    void set_vision_targets(const std::vector<VisionTarget>& ts)
     {
         pending_vision_ = ts;
         vision_pending_ = true;
@@ -925,7 +928,7 @@ private:
     // vision command mode (ArUco footstep targets from the perception node)
     bool vision_mode_ = false;
     VisionConfig vcfg_;
-    std::vector<VisionTargetPelvis> pending_vision_; // latest frame (pelvis)
+    std::vector<VisionTarget> pending_vision_; // latest frame (pelvis)
     bool vision_pending_ = false;
     double vision_now_ = 0.0; // monotonic clock fed by State_Footstep
     struct VisionMemEntry { WorldPose pose; double stamp; };

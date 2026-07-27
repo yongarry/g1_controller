@@ -48,10 +48,10 @@ END_MARK = "<!-- END footstep geoms -->"
 # COLOR_R = "0.80 0.30 0.30 1"  # right foot
 # COLOR_L = "0.30 0.45 0.80 1"  # left foot
 
-COLOR_R = "0.1 0.5 0.5 1"  # right foot
-COLOR_L = "0.1 0.5 0.5 1"  # left foot
+COLOR_R = "0. 0.3 0.5 1"  # right foot
+COLOR_L = COLOR_R  # left foot
 COLOR_GROUND = "0.7 0.6 0.5 1"
-COLOR_PLATFORM = "0. 0. 0. 1"
+COLOR_PLATFORM = COLOR_R
 DEFAULT_PLATFORM_SIZE = (0.12, 0.17)
 DEFAULT_PLATFORM_TOP = 0.0
 DEFAULT_PLATFORM_HALF_HEIGHT = 0.5  # when min(pos_z) >= platform_top
@@ -88,8 +88,19 @@ def yaw_to_quat(yaw):
 
 def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
                     platform_size, platform_top):
-    """Build spawn platform, ground plane at min(pos_z), and stepping geoms."""
-    sx, sy = size_xy
+    """Build spawn platform, ground plane at min(pos_z), and stepping geoms.
+
+    size_xy: (HX, HY) or (HX, HY, HZ). HX/HY are horizontal half-extents [m]
+    (cylinder uses HX as radius). If HZ is given, it is the vertical half-size
+    and the geom top face stays at pos_z; otherwise height is pos_z - ground.
+    """
+    if len(size_xy) == 3:
+        sx, sy, fixed_hz = size_xy
+    elif len(size_xy) == 2:
+        sx, sy = size_xy
+        fixed_hz = None
+    else:
+        raise ValueError(f"size must be HX HY [HZ], got {len(size_xy)} values")
     radius = sx
     plat_hx, plat_hy = platform_size
     ox, oy, oz = off
@@ -131,11 +142,15 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
         x = r["x"] + ox
         y = r["y"] + oy
         z_top = r["z"] + oz
-        height = z_top - z_ground
-        if height < 1e-4:
-            continue  # foothold sits on the ground plane; no pillar needed
-        hz = height * 0.5
-        zc = z_ground + hz
+        if fixed_hz is not None:
+            hz = fixed_hz
+            zc = z_top - hz  # top face at pos_z
+        else:
+            height = z_top - z_ground
+            if height < 1e-4:
+                continue  # foothold sits on the ground plane; no pillar needed
+            hz = height * 0.5
+            zc = z_ground + hz
         qw, qx, qy, qz = yaw_to_quat(r["yaw"])
         color = COLOR_R if r["foot"] == "R" else COLOR_L
         if shape == "cylinder":
@@ -202,9 +217,11 @@ if __name__ == "__main__":
     p.add_argument("--xml", default=DEFAULT_XML, help="MuJoCo scene XML to edit")
     p.add_argument("--shape", choices=["box", "cylinder"], default="cylinder",
                    help="box: yaw-aligned rectangle (default); cylinder: round pillar")
-    p.add_argument("--size", nargs=2, type=float, default=[0.1, 0.06],
-                   metavar=("HX", "HY"),
-                   help="box: horizontal half-extents [m]; cylinder: radius=HX, HY ignored")
+    p.add_argument("--size", nargs="+", type=float, default=[0.1, 0.06],
+                   metavar="H",
+                   help="HX HY [HZ]: box half-extents [m] (cylinder: radius=HX, HY ignored). "
+                        "If HZ given, vertical half-size is fixed (top at pos_z); "
+                        "otherwise height is from ground to pos_z")
     p.add_argument("--plane-margin", type=float, default=3.0,
                    help="extra half-length added around the footstep bounding box for the ground plane [m]")
     p.add_argument("--platform-size", nargs=2, type=float,
@@ -219,6 +236,8 @@ if __name__ == "__main__":
                    help="re-center the lateral (y) span on y=0 (off by default; the "
                         "CSV is already in the real world frame)")
     args = p.parse_args()
+    if len(args.size) not in (2, 3):
+        p.error("--size expects HX HY [HZ] (2 or 3 values)")
 
     rows = read_targets(args.csv)
     block, z_ground, z_min = build_footsteps(rows, args.shape, args.size,

@@ -228,6 +228,22 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
             vc.exclude_radius = yaml_get(vn, "exclude_radius", vc.exclude_radius);
             vc.side_margin = yaml_get(vn, "side_margin", vc.side_margin);
         }
+        // Optional hand-eye extrinsic (D435i camera_link in the head_link
+        // frame); defaults to the official URDF mount otherwise.
+        if (vn && vn["camera"] && vn["camera"]["extrinsic"])
+        {
+            auto ex = vn["camera"]["extrinsic"];
+            auto vec3 = [](const YAML::Node& n) {
+                return isaaclab::math::Vec3(n[0].as<float>(), n[1].as<float>(), n[2].as<float>());
+            };
+            const isaaclab::math::Vec3 pos = ex["pos"] ? vec3(ex["pos"])
+                : isaaclab::math::Vec3(0.05366f, 0.01753f, 0.47387f);
+            const isaaclab::math::Vec3 rpy = ex["rpy"] ? vec3(ex["rpy"])
+                : isaaclab::math::Vec3(0.0f, 0.8307767239493009f, 0.0f);
+            vision_cam_tf_.set_extrinsic(pos, rpy);
+            spdlog::info("[FootVision] camera extrinsic override: pos=({:.4f}, {:.4f}, {:.4f}) "
+                         "rpy=({:.4f}, {:.4f}, {:.4f})", pos[0], pos[1], pos[2], rpy[0], rpy[1], rpy[2]);
+        }
         vision_sub_ = std::make_shared<isaaclab::VisionFootTargetSubscriber>(topic);
 
         fcfg.start_phase_indicator = default_start_phase;
@@ -379,14 +395,20 @@ void State_Footstep::enter()
             command_->set_base_pos_world(isaaclab::math::Vec3(p[0], p[1], p[2]));
         };
 
-        // vision mode: forward the latest perception frame (ingested inside
-        // FootstepCommand::compute() with this tick's stance-foot state).
+        // vision mode: take the latest perception frame (camera optical
+        // frame), convert it to the pelvis frame with the waist FK and this
+        // tick's joint state, and hand it to FootstepCommand (which ingests
+        // it inside compute() with the same tick's stance-foot state).
         auto feed_vision = [&]() {
             if (!vision_sub_) return;
             command_->set_vision_clock(std::chrono::duration<double>(
                 clock::now().time_since_epoch()).count());
-            std::vector<isaaclab::VisionTargetPelvis> ts;
-            if (vision_sub_->take(ts)) command_->set_vision_targets(ts);
+            std::vector<isaaclab::VisionTarget> ts;
+            if (vision_sub_->take(ts))
+            {
+                vision_cam_tf_.to_pelvis(ts, q(12), q(13), q(14));
+                command_->set_vision_targets(ts);
+            }
         };
 
         // initial reset

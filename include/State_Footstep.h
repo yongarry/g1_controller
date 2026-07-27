@@ -46,8 +46,11 @@ private:
     std::unique_ptr<isaaclab::FootstepCommand> command_;
     // Selectable foot-command source (joystick by default, or csv) - see deploy.yaml.
     std::unique_ptr<isaaclab::FootCommandSource> command_source_;
-    // ArUco footstep-target subscriber (command_source == "vision").
+    // ArUco footstep-target subscriber (command_source == "vision"). The node
+    // publishes camera-optical-frame poses; vision_cam_tf_ converts them to
+    // the pelvis frame with the controller's own joint state (waist FK).
     isaaclab::VisionFootTargetSubscriber::SharedPtr vision_sub_;
+    isaaclab::D435PelvisCamTransform vision_cam_tf_;
 
     // upper-body joints held at default (SDK indices + targets/gains)
     std::vector<int> upper_ids_;
