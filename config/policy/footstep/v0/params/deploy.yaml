@@ -7,8 +7,8 @@
 #   isaaclab_dyros/scripts/rsl_rl/export_footstep_deploy.py
 
 # ONNX under <policy_dir>/exported/ (State_Footstep loads this by name).
-# policy_file: 260711_0614.onnx
-policy_file: 260801_2338_2d.onnx
+policy_file: 260711_0614.onnx
+# policy_file: 260801_2338_2d.onnx
 # policy_file: 260802_0625_3d.onnx
 
 # --- lower body (action manager) ---
