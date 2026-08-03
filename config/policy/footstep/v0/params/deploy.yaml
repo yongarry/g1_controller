@@ -218,8 +218,8 @@ footstep:
     # (G13DFootFlatEnvCfg.commands.foot_commands.ranges.com_z); staying inside
     # that band keeps the CoM height in distribution.
     points:
-      - [1.5, -2.0, 1.5708, -0.1]     # walk here crouched
-      - [2.5, 1.5, 1.5708, 0.05]    # then walk here standing taller
+      - [1, -2.0, -1.5708, -0.2]     # walk here crouched
+      - [2, 1, 1.5708, 0.0]    # then walk here standing taller
     step_x_max: 0.2      # [m] nominal (max) forward step
     step_y: 0.237        # [m] nominal lateral step width
     step_yaw_max: 0.2    # [rad] nominal (max) per-step turn
