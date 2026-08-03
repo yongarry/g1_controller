@@ -263,6 +263,11 @@ The command generator is reset on the Y press rather than on state entry, so the
 planner and preview controller anchor on the state the robot is actually in the
 moment it starts moving. Re-entering the state returns to standby.
 
+`command_source: csv_global` is the exception: its plan is authored in its own
+world frame and there is nothing for the operator to aim first, so it starts
+walking on state entry and stops back into the standby hold once the last
+footstep of the plan has been executed.
+
 ### Joystick mode (`command_source: joystick`)
 
 In `Footstep`, the left stick commands forward step length (`ly`) and lateral
@@ -278,7 +283,7 @@ per-step height change).
 |------|-------------|
 | `joystick` | Operator drives local per-step commands each control tick. |
 | `csv` | Replay local per-step commands from `footstep.csv_path`. |
-| `csv_global` | Follow absolute world-frame targets from `footstep.global_csv_path`; the planner recomputes the local command from the accumulated stance foot to each target every step (drift-corrected). |
+| `csv_global` | Follow absolute world-frame targets from `footstep.global_csv_path`; the planner recomputes the local command from the accumulated stance foot to each target every step (drift-corrected). Starts on state entry (no Y press) and stops standing at the end of the plan. |
 | `goal` | Walk to the world-frame goal points under `footstep.goal`, stopping at each one. See [Goal-reaching mode](#goal-reaching-mode-command_source-goal). |
 | `vision` | ArUco footstep targets estimated online with the head D435i. See [Vision-based footstep targets](#vision-based-footstep-targets-aruco--d435i). |
 

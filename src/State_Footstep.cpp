@@ -521,9 +521,10 @@ void State_Footstep::enter()
             }
         };
 
-        // initial reset. The planner is NOT reset here: the state enters in
-        // standby (see below) and command_->reset() runs at the moment walking
-        // starts, so the planner anchors on the state the robot is in then.
+        // initial reset. Except for csv_global (see auto_start below) the planner
+        // is NOT reset here: the state enters in standby and command_->reset()
+        // runs at the moment walking starts, so it anchors on the state the
+        // robot is in then.
         env->robot->update();
         load_full_state(q, qd);
         kin_->set_state(q, qd);
@@ -531,14 +532,19 @@ void State_Footstep::enter()
         update_base_from_odom();
         if (command_source_) command_->set_input(command_source_->input());
         feed_vision();
-        command_->hold_standby(0.0f);
+        // csv_global replays a fixed plan authored in its own world frame, so it
+        // starts walking as soon as the state is entered - there is nothing for
+        // the operator to aim first. Every other source waits in standby.
+        const bool auto_start = command_->global_mode();
+        if (auto_start) command_->reset();
+        else            command_->hold_standby(0.0f);
         env->reset();
 
         // STANDBY -> (Y) -> WALKING -> (goal reached) -> AT_GOAL -> WALKING ...
-        // and FINISHED once the last goal is reached. Everything but WALKING
-        // holds the standby command, i.e. the robot stands still.
+        // and FINISHED once the last goal / the global plan is done. Everything
+        // but WALKING holds the standby command, i.e. the robot stands still.
         enum class Mode { STANDBY, WALKING, AT_GOAL, FINISHED };
-        Mode mode = Mode::STANDBY;
+        Mode mode = auto_start ? Mode::WALKING : Mode::STANDBY;
         auto resume_at = clock::now();
         // CoM height to stand at: 0 before the first step, then the com_z of the
         // goal just reached, so stopping does not undo the crouch the robot
@@ -632,6 +638,14 @@ void State_Footstep::enter()
                     command_->hold_standby(standby_com_z);
                     spdlog::info("[FootGoal] stopped at goal {} (com_z={:.3f}){}", reached + 1,
                                  standby_com_z, last ? ", last goal: staying stopped" : "");
+                }
+                else if (command_->global_plan_done())
+                {
+                    // Global plan finished: stop on the foot that just landed and
+                    // hold the default pose rather than marching in place.
+                    mode = Mode::FINISHED;
+                    command_->hold_standby(standby_com_z);
+                    spdlog::info("[FootCommand/Global] plan complete: stopping, holding the default pose.");
                 }
                 else
                 {

@@ -129,6 +129,13 @@ public:
         if (global_mode_) cfg_.start_phase_indicator = global_plan_.front().phase;
     }
     bool global_mode() const { return global_mode_; }
+    // True once the last footstep of the global plan has been executed, i.e. the
+    // planner has started emitting station-keeping steps. The caller stops the
+    // gait here instead of letting the robot march in place forever.
+    bool global_plan_done() const
+    {
+        return global_mode_ && planner_index_ >= (int)global_plan_.size();
+    }
 
     // --- vision command mode (ArUco footstep targets) ------------------------
     // Targets are measured by cmd/aruco_footstep_perception.py in the camera
