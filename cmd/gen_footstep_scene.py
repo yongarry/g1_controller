@@ -48,7 +48,8 @@ END_MARK = "<!-- END footstep geoms -->"
 # COLOR_R = "0.80 0.30 0.30 1"  # right foot
 # COLOR_L = "0.30 0.45 0.80 1"  # left foot
 
-COLOR_R = "0. 0.3 0.5 1"  # right foot
+# COLOR_R = "0. 0.3 0.5 1"  # right foot
+COLOR_R = "0.3 0.3 0.3 1"  # right foot
 COLOR_L = COLOR_R  # left foot
 COLOR_GROUND = "0.7 0.6 0.5 1"
 COLOR_PLATFORM = COLOR_R
@@ -215,7 +216,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Generate footstep geoms in a MuJoCo scene XML.")
     p.add_argument("--csv", default=DEFAULT_CSV, help="footcommands_global.csv path")
     p.add_argument("--xml", default=DEFAULT_XML, help="MuJoCo scene XML to edit")
-    p.add_argument("--shape", choices=["box", "cylinder"], default="cylinder",
+    p.add_argument("--shape", choices=["box", "cylinder"], default="box",
                    help="box: yaw-aligned rectangle (default); cylinder: round pillar")
     p.add_argument("--size", nargs="+", type=float, default=[0.1, 0.06],
                    metavar="H",

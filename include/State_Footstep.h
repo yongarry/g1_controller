@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 #include <fstream>
@@ -52,11 +54,28 @@ private:
     isaaclab::VisionFootTargetSubscriber::SharedPtr vision_sub_;
     isaaclab::D435PelvisCamTransform vision_cam_tf_;
 
-    // upper-body joints held at default (SDK indices + targets/gains)
+    // upper-body joints held at a pose (SDK indices + targets/gains)
     std::vector<int> upper_ids_;
     std::vector<float> upper_default_;
     std::vector<float> upper_kp_;
     std::vector<float> upper_kd_;
+
+    // --- per-goal stop (goal command source) --------------------------------
+    // On reaching a goal the gait freezes (standby command), the upper body
+    // interpolates to that goal's pose, and after `stop_hold_time_` the robot
+    // walks on holding it. The last goal ends in the stopped state.
+    // The interpolation runs in run() (1 kHz); the policy thread only picks the
+    // pose and waits for upper_motion_done_.
+    void update_upper_target();
+    std::vector<std::vector<float>> stop_poses_; // per goal (may be shorter/empty)
+    float stop_move_time_ = 1.5f;                // [s] upper-body motion time
+    float stop_hold_time_ = 1.0f;                // [s] extra pause after it
+    std::atomic<int> upper_pose_index_{-1};      // -1: upper_default_
+    std::atomic<bool> upper_motion_done_{true};
+    std::vector<float> upper_target_;            // what run() sends to lowcmd
+    std::vector<float> upper_from_;              // motion start pose
+    int upper_pose_active_ = -1;                 // pose run() is moving toward
+    std::chrono::steady_clock::time_point upper_t0_;
 
     // joystick -> command mapping
     isaaclab::FootCommandInput default_input_;
@@ -66,6 +85,10 @@ private:
 
     std::thread policy_thread;
     bool policy_thread_running = false;
+
+    // Set by run() on the Y button; the policy thread stands still (standby)
+    // until it flips, then resets the planner and starts walking.
+    std::atomic<bool> walk_started_{false};
 
     // sim_odom: MuJoCo ground-truth base position from rt/odommodestate
     bool use_sim_odom_ = false;

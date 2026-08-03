@@ -26,10 +26,10 @@ _PROJ_DIR = os.path.dirname(_THIS_DIR)
 DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 
 # Trained command ranges (must match footstep deploy.yaml `footstep.ranges`).
-RANGE_X = (0.25, 0.25)     # forward step length [m]
+RANGE_X = (0.2, 0.3)     # forward step length [m]
 RANGE_Y = (0.237, 0.237)      # lateral step width (positive magnitude) [m]
-RANGE_Z = (0.1, 0.1)   # per-step height change [m]
-RANGE_YAW = (-0., 0.)   # per-step turn [rad]
+RANGE_Z = (-0.05, 0.1)   # per-step height change [m]
+RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
@@ -79,8 +79,8 @@ if __name__ == "__main__":
                    metavar=("MIN", "MAX"), help="step_z range [m]")
     p.add_argument("--yaw", nargs=2, type=float, default=list(RANGE_YAW),
                    metavar=("MIN", "MAX"), help="step_yaw range [rad]")
-    p.add_argument("--ssp", type=float, default=0.8, help="single support time [s]")
-    p.add_argument("--dsp", type=float, default=0.1, help="double support time [s]")
+    p.add_argument("--ssp", type=float, default=0.7, help="single support time [s]")
+    p.add_argument("--dsp", type=float, default=0.15, help="double support time [s]")
     p.add_argument("--height", type=float, default=0.08, help="swing apex height [m]")
     p.add_argument("--no-stop", action="store_true",
                    help="do not force the last step to be a stop step")
@@ -110,4 +110,5 @@ if __name__ == "__main__":
 
     # execute gen_footstep_scene.py to generate footstep cubes in the MuJoCo scene XML
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])

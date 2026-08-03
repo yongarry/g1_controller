@@ -17,7 +17,10 @@ them through ONNX Runtime, and publishes low-level Unitree motor commands throug
 - Supports policy directory version discovery, such as `config/policy/velocity/v0`.
 - Uses joystick transition expressions defined in `config/config.yaml`.
 - Footstep deploy with on-device `OnlineFootCommand` (VRP + ZMP preview + Pinocchio IK).
-- Helper scripts under `cmd/` to generate foot-command CSVs and MuJoCo stepping-stone scenes.
+- Footstep command sources: joystick, CSV replay, world-frame plans, ArUco vision, and
+  goal-reaching with per-goal CoM height, arrival heading and upper-body poses.
+- Helper scripts under `cmd/` to generate foot-command CSVs and MuJoCo stepping-stone /
+  goal-marker scenes.
 - Designed for Unitree G1 29-DoF deployment workflows.
 
 ## Project Layout
@@ -27,7 +30,8 @@ them through ONNX Runtime, and publishes low-level Unitree motor commands throug
 ├── cmd/
 │   ├── gen_cmd.py                    # sample local foot commands -> footcommands.csv
 │   ├── convert_footcommand_2_global.py
-│   └── gen_footstep_scene.py         # write stepping stones into MuJoCo scene XML
+│   ├── gen_footstep_scene.py         # write stepping stones into MuJoCo scene XML
+│   └── gen_goals.py                  # write goal markers into MuJoCo scene XML
 ├── config/
 │   ├── config.yaml                   # FSM states, transitions, and policy paths
 │   ├── footcommands.csv              # local per-step commands (generated)
@@ -139,8 +143,11 @@ processes from the repo root:
 `run_sim.sh` resolves paths relative to itself, so it works regardless of where
 `g1_ws` lives on disk. Ctrl+C tears down both the simulator and `g1_ctrl`.
 
-For footstep sim, use the footstep scene in `unitree_mujoco` and set
-`footstep.foot_state_source: sim_odom` in the footstep `deploy.yaml`.
+For footstep sim, pick the matching scene in `unitree_mujoco/simulate/config.yaml`
+(`scene_29dof_footstep.xml` for stepping stones, `scene_29dof_goals.xml` for goal
+markers). `footstep.foot_state_source: sim_odom` gives the planner ground-truth
+foot poses; use `fk_odometry` to rehearse what the real robot will actually see —
+see [Odometry](#odometry-footstepfoot_state_source).
 
 ## Policy Directory Format
 
@@ -240,6 +247,21 @@ Passive --[LT+Up]--> FixStand --[RB+Y]--> Footstep
 Footstep --[LT+B]--> Passive ,  Footstep --[RB+X]--> Velocity
 ```
 
+### Starting and stopping
+
+Entering `Footstep` does **not** start walking. The state holds a *standby*
+command — phase frozen at the start of a step, IK target at the default joint
+pose, zero foot command — so the robot stands still while already running the
+footstep policy. Press **Y** to start:
+
+```text
+FixStand --[RB+Y]--> Footstep (standing, standby) --[Y]--> walking
+```
+
+The command generator is reset on the Y press rather than on state entry, so the
+planner and preview controller anchor on the state the robot is actually in the
+moment it starts moving. Re-entering the state returns to standby.
+
 ### Joystick mode (`command_source: joystick`)
 
 In `Footstep`, the left stick commands forward step length (`ly`) and lateral
@@ -256,10 +278,13 @@ per-step height change).
 | `joystick` | Operator drives local per-step commands each control tick. |
 | `csv` | Replay local per-step commands from `footstep.csv_path`. |
 | `csv_global` | Follow absolute world-frame targets from `footstep.global_csv_path`; the planner recomputes the local command from the accumulated stance foot to each target every step (drift-corrected). |
+| `goal` | Walk to the world-frame goal points under `footstep.goal`, stopping at each one. See [Goal-reaching mode](#goal-reaching-mode-command_source-goal). |
+| `vision` | ArUco footstep targets estimated online with the head D435i. See [Vision-based footstep targets](#vision-based-footstep-targets-aruco--d435i). |
 
 For `csv` / `csv_global`, generate the CSV files with the `cmd/` scripts (below).
 Set `footstep.global_init_lfoot` / `global_init_rfoot` to the spawn foot poses in
-the MuJoCo scene keyframe so the global plan frame matches the simulator.
+the MuJoCo scene keyframe so the global plan frame matches the simulator. (The
+`goal` mode does not use those keys — it anchors on the robot itself.)
 
 ### Generating foot commands and MuJoCo scene
 
@@ -310,6 +335,97 @@ only the marked auto-generated region):
 Then set `command_source: csv_global` in the footstep `deploy.yaml` and run
 `./run_sim.sh`.
 
+### Goal-reaching mode (`command_source: goal`)
+
+Walk to a list of world-frame goal points, stopping at each one. The step
+generation follows the goal-reaching gait generator from `mind-your-step`, mapped
+onto this planner's stance-frame foot command.
+
+At every step boundary the planner measures the active goal from the current
+stance foot and emits the nominal step clamped toward it — so far from the goal
+the robot takes full steps, and the last step before it is the residual
+`goal - current position`. The swing foot is aimed at where it has to *stand for
+the robot centre* (the midpoint of the two feet) to land on the goal, half a
+stance width to the swing side, rather than at the goal itself: stepping onto the
+goal converges with a foot on it and the body half a stance width beside it,
+which a reach test measured at the centre would never accept.
+
+```yaml
+footstep:
+  command_source: goal
+  goal:
+    points:
+      - [1.5, -2.0, 0.0,    -0.08]   # walk here crouched, arriving facing +x
+      - [2.5,  1.5, 1.5708,  0.04]   # then here standing taller, facing +y
+    step_x_max: 0.2      # [m] nominal (== max) forward step
+    step_y: 0.237        # [m] nominal lateral step width
+    step_yaw_max: 0.2    # [rad] nominal (== max) per-step turn
+    ssp_t: 0.7
+    dsp_t: 0.15
+    height: 0.08
+    reach_radius: 0.05   # [m] reached within this of the robot centre
+    reach_yaw: 0.1       # [rad] heading tolerance (points that specify a yaw)
+    align_radius: 1.0    # [m] start blending into the goal heading here
+    stop:
+      move_time: 1.5     # [s] upper-body interpolation
+      hold_time: 1.0     # [s] pause after it before walking on
+      upper_body_pose:   # one per goal, layout of upper_body.default_joint_pos
+        - [0.0, 0.0, 0.0,  -1.2, 0.2, 0.0, 0.4, 0.0, 0.0, 0.0, ...]
+        - [0.0, 0.0, 0.0,   0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0, ...]
+```
+
+A point is one of:
+
+| Form | Meaning |
+|------|---------|
+| `[x, y]` | pass through this point, arrival heading free |
+| `[x, y, yaw]` | arrive at this point facing `yaw` [rad] |
+| `[x, y, yaw, com_z]` | … and walk there with this CoM height offset [m] |
+
+**Heading.** With a `yaw`, the turn steers at the goal *position* while far away
+and blends into the goal *heading* between `align_radius` and `reach_radius`, so
+the robot finishes by turning on the spot. The goal is only consumed once the
+heading is within `reach_yaw` as well as the position within `reach_radius`.
+
+**CoM height.** `com_z` shifts the VRP/CoM height reference (`vrp_height + com_z`)
+for the whole leg of the walk leading **to** that point: negative crouches,
+positive stands up. Keep it inside the range the policy was trained on —
+`(-0.1, 0.05)` for `G13DFootFlatEnvCfg`, which is the config the shipped
+`vrp_height: 0.6258` / `pelv_com_offset: 0.0678` deploy params come from. There
+is no clamp on this value.
+
+**Stopping at each goal.** On arrival the gait freezes (the same standby command
+used before the Y press), the upper body interpolates to that goal's
+`stop.upper_body_pose` over `move_time`, and after `hold_time` the robot walks on
+**holding that pose**. The last goal ends stopped for good. A goal with no pose
+entry still stops, keeping whatever pose is already held.
+
+**Frame.** The goal frame is anchored on the robot itself at the moment walking
+starts: the midpoint of its two feet is `x, y = 0, 0` and it faces `yaw = 0`. That
+anchor is measured, not configured, so nothing has to be known about a spawn pose
+— this mode ignores `global_init_lfoot` / `global_init_rfoot`.
+
+Visualize the points in MuJoCo:
+
+```bash
+python3 cmd/gen_goals.py
+```
+
+**`gen_goals.py`** — resolves the Footstep policy dir from `config/config.yaml`
+the same way the controller does, reads `footstep.goal.points` from that
+`deploy.yaml`, and writes
+`unitree_mujoco/unitree_robots/g1/scene_29dof_goals.xml`: a `reach_radius` disc,
+a marker pole, and an arrival-heading arrow per goal (points without a `yaw` get
+no arrow). Seeded from `scene_29dof.xml` on the first run and idempotent
+afterwards — re-running replaces only the marked region. All markers are visual
+only (`contype`/`conaffinity` = 0), so the robot walks through them. Then point
+the simulator at the scene:
+
+```yaml
+# unitree_mujoco/simulate/config.yaml
+robot_scene: "scene_29dof_goals.xml"
+```
+
 ### Vision-based footstep targets (ArUco + D435i)
 
 `command_source: vision` closes the loop through the head-mounted D435i instead
@@ -356,10 +472,43 @@ Real robot: print `unitree_robots/g1/aruco_markers/sheet_target_##.png` at
 perception node with `--source realsense` (requires `pyrealsense2`). An
 optional hand-eye correction can be set in `footstep.vision.camera.extrinsic`.
 
+Two things decide whether detection survives an actual walk:
+
+* **Exposure.** Auto-exposure settles near 16 ms indoors and the head motion of
+  a step smears the marker corners until the decoder gives up, so the color
+  exposure/gain are pinned from `footstep.vision.camera.exposure_us` / `gain`
+  (`0` = auto). Tune in the field with `--exposure-us` / `--gain`: shorten it
+  if markers hold while standing but drop out while walking.
+* **Capture-time waist angles.** The node subscribes `rt/lowstate` and stamps
+  every frame with the waist joints it was captured at; the controller runs the
+  camera->pelvis FK on those instead of the joints of the tick that consumes
+  the frame (tens of ms later, a different head pose). Without `rt/lowstate`
+  the node still publishes and the controller falls back, warning once.
+
 The robot steps in place until targets enter the camera view; targets are
 remembered (`vision.memory`, world frame) while temporarily out of view.
 `cmd/test_aruco_sim_render.py` validates the render->detect->PnP chain against
 MuJoCo ground truth without DDS.
+
+### Odometry (`footstep.foot_state_source`)
+
+| Mode | Description |
+|------|-------------|
+| `fk_odometry` | Default, and the only option on hardware. Foot world poses are dead-reckoned from FK landing measurements; the heading comes from the pelvis IMU. |
+| `sim_odom` | MuJoCo only: ground-truth base pose from `rt/odommodestate` plus the FK foot offset, re-measured every tick. |
+
+With `fk_odometry` the accumulated world frame gets its **position** by composing
+the measured foot-to-foot transform at each landing, but its **heading** from the
+pelvis IMU — re-read every control tick, offset once so the frame starts at the
+heading the robot had when walking began (so the arbitrary IMU boot yaw does not
+matter). Integrating the per-step relative foot yaw instead, the obvious
+alternative, accumulates every landing measurement error without bound and only
+advances at step boundaries, so a rotation while the robot is *not* stepping —
+a pivot during the standby hold or a stop at a goal — is never seen at all.
+
+Position remains pure dead reckoning and does drift; only an absolute reference
+(the `vision` mode, SLAM, mocap) can correct that. Heading matters more in
+practice because its error compounds into position error with distance.
 
 ### Deployment notes / assumptions
 
@@ -375,6 +524,23 @@ MuJoCo ground truth without DDS.
   frames.
 * Start on a flat floor with the robot already balanced (enter from `FixStand`).
   Validate first in sim2sim / loopback DDS (`--network lo`) before the real robot.
+
+Extra care before running `command_source: goal` on hardware:
+
+* Set `foot_state_source: fk_odometry` — `sim_odom` needs `rt/odommodestate`,
+  which only the simulator publishes. It is also worth rehearsing in sim with
+  `fk_odometry` first, since that is what the robot will actually see.
+* The goal frame is fixed at the **Y press**, so have the robot standing settled
+  and square before starting; everything downstream is measured from that pose.
+* Goal positions are dead-reckoned. The robot reaches each goal in *its own
+  estimate*; the true landing spot is off by whatever position drift has
+  accumulated, which grows with distance walked.
+* `com_z` is not clamped, and `stop.upper_body_pose` moves mass the footstep
+  policy was trained with at its defaults. Both change the CoM the preview
+  controller is tracking — ramp them up gradually rather than starting at the
+  edge of the trained range.
+* `vrp_height` / `pelv_com_offset` and the joint gains in `deploy.yaml` are tuned
+  for the sim model; re-check them against the physical robot.
 
 ## Acknowledgements
 

@@ -7,7 +7,9 @@
 // The node publishes RAW camera-frame estimates as a JSON payload on a
 // std_msgs String topic (default rt/footstep_vision):
 //
-//   {"stamp": <unix time>, "frame": "camera_optical", "targets": [
+//   {"stamp": <unix time>, "frame": "camera_optical",
+//    "waist": [yaw, roll, pitch],
+//    "targets": [
 //      {"id": 0, "pos": [x, y, z], "quat": [w, x, y, z], "nmk": 4, "err": 0.3},
 //      ... ]}
 //
@@ -15,9 +17,16 @@
 // surface, x = footstep yaw direction, z = up) expressed in the D435i COLOR
 // OPTICAL frame (OpenCV convention: x right, y down, z forward - the direct
 // solvePnP output). The controller converts them to the pelvis frame with
-// D435PelvisCamTransform (analytic waist FK below) using its own joint state,
-// then FootstepCommand (vision mode) takes them to the stance-foot frame /
-// accumulated world frame and plans on them.
+// D435PelvisCamTransform (analytic waist FK below), then FootstepCommand
+// (vision mode) takes them to the stance-foot frame / accumulated world frame
+// and plans on them.
+//
+// "waist" carries the three waist joint positions sampled when the image was
+// captured, and is what the camera->pelvis FK must run on: the frame reaches
+// the controller tens of ms later, and with the head moving, the joints of the
+// consuming tick describe a different camera pose than the one the markers
+// were seen from - the mismatch lands directly on the target position. The
+// field is optional; without it the caller falls back to the current tick.
 //
 // JSON is parsed with yaml-cpp (JSON is a YAML subset), so no extra
 // dependency is needed.
@@ -51,6 +60,17 @@ struct VisionTarget
     math::Quat quat = math::Quat::Identity();
     int num_markers = 0;      // markers used for the PnP (1..4)
     float reproj_err = 0.0f;  // mean reprojection error [px]
+};
+
+// One perception frame: the targets it saw plus the waist configuration the
+// camera was in when it saw them.
+struct VisionFrame
+{
+    std::vector<VisionTarget> targets;
+    double stamp = 0.0;       // capture time [unix s], 0 if absent
+    bool has_waist = false;   // capture-time waist angles available
+    // [yaw, roll, pitch] of the waist chain at capture time [rad]
+    math::Vec3 waist = math::Vec3::Zero();
 };
 
 // ---------------------------------------------------------------------------
@@ -139,9 +159,9 @@ public:
     : SubscriptionBase<std_msgs::msg::dds_::String_>(topic) {}
 
     // Parse the latest payload into `out`. Returns true only when a message
-    // newer than the previously taken one was parsed successfully (out may be
-    // empty: a valid frame with no detected targets).
-    bool take(std::vector<VisionTarget>& out)
+    // newer than the previously taken one was parsed successfully (out may
+    // hold no targets: a valid frame with nothing in view).
+    bool take(VisionFrame& out)
     {
         std::string payload;
         {
@@ -155,7 +175,25 @@ public:
         try
         {
             YAML::Node n = YAML::Load(payload);
-            out.clear();
+            out.targets.clear();
+            out.stamp = n["stamp"] ? n["stamp"].as<double>() : 0.0;
+            out.has_waist = false;
+            if (n["waist"] && n["waist"].size() == 3)
+            {
+                out.waist = math::Vec3(n["waist"][0].as<float>(),
+                                       n["waist"][1].as<float>(),
+                                       n["waist"][2].as<float>());
+                out.has_waist = true;
+                no_waist_logged_ = false;
+            }
+            else if (!no_waist_logged_)
+            {
+                no_waist_logged_ = true;
+                spdlog::warn("[FootVision] payload carries no capture-time "
+                             "waist angles; falling back to the current "
+                             "tick's joints (rt/lowstate down at the "
+                             "perception node?)");
+            }
             if (n["targets"])
             {
                 for (const auto& t : n["targets"])
@@ -172,7 +210,7 @@ public:
                     v.quat.normalize();
                     if (t["nmk"]) v.num_markers = t["nmk"].as<int>();
                     if (t["err"]) v.reproj_err = t["err"].as<float>();
-                    out.push_back(v);
+                    out.targets.push_back(v);
                 }
             }
             parse_error_logged_ = false;
@@ -196,6 +234,7 @@ private:
     uint64_t seq_ = 0;
     uint64_t taken_seq_ = 0;
     bool parse_error_logged_ = false;
+    bool no_waist_logged_ = false;
 };
 
 } // namespace isaaclab

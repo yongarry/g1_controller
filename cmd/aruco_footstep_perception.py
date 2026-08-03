@@ -18,18 +18,32 @@
 #               and renders the "d435i" camera offscreen. Ground-truth-free:
 #               the detection pipeline is identical to the real one.
 #   realsense - Intel RealSense D435i color stream via pyrealsense2 (factory
-#               intrinsics). Needs NO DDS robot state and NO mujoco package:
-#               on the robot PC the dependencies are only numpy, opencv
-#               (contrib), pyrealsense2, pyyaml and unitree_sdk2py.
+#               intrinsics). Needs NO mujoco package: on the robot PC the
+#               dependencies are only numpy, opencv (contrib), pyrealsense2,
+#               pyyaml and unitree_sdk2py. rt/lowstate is subscribed to stamp
+#               each frame with its capture-time waist angles (see below); if
+#               it never arrives the node keeps publishing without them.
 #
 # Frames: published poses are T_cam_target in the D435i COLOR OPTICAL frame
 # (OpenCV convention: x right, y down, z forward - the direct solvePnP
 # output). PnP is solved per target on all detected marker corners (<=16 pts).
 #
+# Each frame also carries the waist joints (SDK 12 yaw, 13 roll, 14 pitch)
+# sampled when the image was captured, so the controller can run the
+# camera->pelvis FK with the pose the head actually had at exposure time
+# instead of the one it has tens of ms later, when the frame is consumed.
+#
+# Exposure: auto-exposure settles around 16 ms indoors, which smears the
+# marker corners while the robot walks and kills the decoder long before a
+# color blob would degrade. The color exposure/gain are therefore fixed from
+# deploy.yaml (vision.camera.exposure_us / gain); set exposure_us: 0 to go
+# back to auto.
+#
 # Usage:
 #   python3 cmd/aruco_footstep_perception.py                     # sim, iface lo
 #   python3 cmd/aruco_footstep_perception.py --network enp3s0 --source realsense
 #   python3 cmd/aruco_footstep_perception.py --show              # debug window
+#   python3 cmd/aruco_footstep_perception.py --exposure-us 4000  # field tuning
 
 import argparse
 import json
@@ -62,6 +76,7 @@ SCENE_XML = os.path.join(_WS_DIR, "unitree_mujoco", "unitree_robots", "g1",
                          "scene_29dof_footstep.xml")  # sim source only
 
 NUM_JOINTS = 29
+WAIST_IDS = (12, 13, 14)  # SDK indices: waist yaw, roll, pitch
 
 
 def mat_to_quat_wxyz(R):
@@ -108,6 +123,13 @@ class RobotState:
         self.quat = np.array(msg.imu_state.quaternion)  # w x y z
         self.t_low = time.time()
 
+    def waist(self):
+        """[yaw, roll, pitch] of the waist chain, or None if lowstate is
+        stale/absent (the controller then falls back to its own tick)."""
+        if self.t_low <= 0.0 or time.time() - self.t_low > 0.5:
+            return None
+        return [float(self.q[i]) for i in WAIST_IDS]
+
     def _on_odom(self, msg):
         self.base_pos = np.array(msg.position)
         self.t_odom = time.time()
@@ -152,14 +174,17 @@ class SimCamera:
         self.dist = None
 
     def read(self):
+        """(bgr image, capture-time waist joints)."""
         s = self.state
+        q = s.q.copy()  # the pose this frame is rendered from
         self.data.qpos[0:3] = s.base_pos
         self.data.qpos[3:7] = s.quat
-        self.data.qpos[7:7 + NUM_JOINTS] = s.q
+        self.data.qpos[7:7 + NUM_JOINTS] = q
         mujoco.mj_forward(self.model, self.data)
         self.renderer.update_scene(self.data, camera="d435i")
         rgb = self.renderer.render()
-        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        waist = [float(q[i]) for i in WAIST_IDS]
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), waist
 
 
 class RealsenseCamera:
@@ -171,9 +196,14 @@ class RealsenseCamera:
     Intrinsics always come from the profile that actually started."""
 
     MIN_FPS = 6  # planner samples per step (~1 s), so >=6 Hz is sufficient
+    # The RGB sensor reports exposure in UVC "absolute exposure time" units of
+    # 100 us (unlike the depth sensor, which uses us), so 6 ms -> option 60.
+    COLOR_EXPOSURE_UNIT_US = 100.0
 
-    def __init__(self, width, height, fps):
+    def __init__(self, width, height, fps, state=None, exposure_us=0, gain=None):
         import pyrealsense2 as rs
+
+        self.state = state
 
         usb, modes = self._probe(rs)
         w, h, f = self._pick_mode(modes, width, height, fps)
@@ -213,6 +243,8 @@ class RealsenseCamera:
         else:
             raise last_err
 
+        self._configure_exposure(rs, prof, exposure_us, gain, f)
+
         intr = prof.get_stream(rs.stream.color) \
                    .as_video_stream_profile().get_intrinsics()
         self.K = np.array([[intr.fx, 0, intr.ppx],
@@ -220,6 +252,72 @@ class RealsenseCamera:
         self.dist = np.array(intr.coeffs, dtype=np.float64)
         if not np.any(self.dist):
             self.dist = None
+
+    @classmethod
+    def _configure_exposure(cls, rs, prof, exposure_us, gain, fps):
+        """Pin the color exposure (and gain) so walking does not blur the
+        markers away.
+
+        Auto-exposure targets image brightness, not sharpness: indoors it
+        settles around 16 ms, and with the head bobbing a 3 cm marker smears
+        over several pixels - the corner refinement then fails, and a failed
+        decode is a target the planner never sees. A short fixed exposure with
+        the gain raised to compensate keeps the corners crisp at the cost of
+        noise, which the decoder tolerates far better.
+
+        exposure_us <= 0 restores auto-exposure.
+        """
+        try:
+            sensor = prof.get_device().first_color_sensor()
+        except Exception as e:
+            print(f"[perception] cannot access color sensor, leaving exposure "
+                  f"on auto ({e})")
+            return
+
+        def set_opt(opt, value, name):
+            if not sensor.supports(opt):
+                print(f"[perception] color sensor has no {name} option")
+                return None
+            try:
+                r = sensor.get_option_range(opt)
+                v = float(min(max(value, r.min), r.max))
+                sensor.set_option(opt, v)
+                return v
+            except Exception as e:
+                print(f"[perception] failed to set {name}={value}: {e}")
+                return None
+
+        if exposure_us is None or exposure_us <= 0:
+            set_opt(rs.option.enable_auto_exposure, 1, "auto-exposure")
+            print("[perception] color auto-exposure ON (markers will blur "
+                  "while walking - set vision.camera.exposure_us to fix it)")
+            return
+
+        # A frame cannot expose longer than its period; warn rather than let
+        # librealsense silently drop the framerate.
+        max_us = 1e6 / max(fps, 1)
+        if exposure_us > max_us:
+            print(f"[perception] exposure {exposure_us:.0f} us exceeds the "
+                  f"{fps} fps frame period ({max_us:.0f} us); the driver will "
+                  f"clamp it or drop frames")
+
+        if set_opt(rs.option.enable_auto_exposure, 0, "auto-exposure") is None:
+            return
+        v = set_opt(rs.option.exposure,
+                    exposure_us / cls.COLOR_EXPOSURE_UNIT_US, "exposure")
+        applied = "unchanged" if v is None else \
+            f"{v * cls.COLOR_EXPOSURE_UNIT_US:.0f} us"
+        msg = f"[perception] color exposure fixed at {applied}"
+
+        if gain is not None:
+            if sensor.supports(rs.option.enable_auto_white_balance):
+                # WB keeps hunting on a fixed exposure and only shifts hue -
+                # the detector works on gray, so freeze it for stable frames.
+                set_opt(rs.option.enable_auto_white_balance, 0, "auto-WB")
+            g = set_opt(rs.option.gain, gain, "gain")
+            if g is not None:
+                msg += f", gain {g:.0f}"
+        print(msg)
 
     @staticmethod
     def _probe(rs):
@@ -291,9 +389,15 @@ class RealsenseCamera:
         return max(pool, key=lambda m: (m[0] * m[1], m[2]))
 
     def read(self):
+        """(bgr image, capture-time waist joints)."""
         frames = self.pipe.wait_for_frames()
+        # Sampled here, right as the frame is delivered: this is the closest
+        # we can get to the exposure instant without a hardware trigger, and
+        # it is what makes the controller's camera->pelvis FK consistent with
+        # the pose the head had when the markers were seen.
+        waist = self.state.waist() if self.state is not None else None
         img = np.asanyarray(frames.get_color_frame().get_data())
-        return img
+        return img, waist
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +461,12 @@ def main():
     p.add_argument("--source", default=None, choices=[None, "sim", "realsense"])
     p.add_argument("--show", action="store_true", help="debug window")
     p.add_argument("--rate", type=float, default=15.0, help="publish rate [Hz]")
+    p.add_argument("--exposure-us", type=float, default=None,
+                   help="fixed color exposure [us]; 0 = auto "
+                        "(overrides vision.camera.exposure_us)")
+    p.add_argument("--gain", type=float, default=None,
+                   help="color gain to go with the fixed exposure "
+                        "(overrides vision.camera.gain)")
     args = p.parse_args()
 
     with open(args.deploy) as f:
@@ -374,6 +484,10 @@ def main():
     fps = int(cam_cfg.get("fps", 30))
     min_markers = int(vis_cfg.get("min_markers", 2))
     max_reproj = float(vis_cfg.get("max_reproj_px", 2.0))
+    exposure_us = args.exposure_us if args.exposure_us is not None \
+        else float(cam_cfg.get("exposure_us", 0))
+    gain = args.gain if args.gain is not None else cam_cfg.get("gain")
+    gain = None if gain is None else float(gain)
 
     board = ac.load_board(board_path)
     print(f"[perception] board: {board_path} "
@@ -381,9 +495,8 @@ def main():
 
     ChannelFactoryInitialize(args.domain, args.network)
     if source == "sim":
-        # robot state (rt/lowstate + rt/odommodestate) is only needed to
-        # mirror the sim pose for rendering; the realsense path is DDS-
-        # publish-only.
+        # rt/lowstate + rt/odommodestate mirror the sim pose for rendering
+        # (and supply the per-frame waist angles).
         state = RobotState(want_odom=True)
         print("[perception] waiting for rt/lowstate + rt/odommodestate ...")
         if not state.wait(need_odom=True):
@@ -391,7 +504,22 @@ def main():
             sys.exit(1)
         cam = SimCamera(SCENE_XML, state, width, height)
     else:
-        cam = RealsenseCamera(width, height, fps)
+        # rt/lowstate is only needed to stamp each frame with the waist
+        # angles it was captured at. Not fatal if absent: the controller then
+        # falls back to the joint state of the tick that consumes the frame.
+        state = RobotState(want_odom=False)
+        print("[perception] waiting for rt/lowstate (capture-time waist "
+              "angles) ...")
+        if not state.wait(need_odom=False, timeout=3.0):
+            # Keep the subscriber alive anyway: waist() reports None while the
+            # state is stale and starts stamping frames by itself once the
+            # controller comes up.
+            print("[perception] WARNING: no rt/lowstate yet - publishing "
+                  "without capture-time waist angles; the controller falls "
+                  "back to the consuming tick's joints (adds head-motion "
+                  "error). Will pick them up if lowstate appears.")
+        cam = RealsenseCamera(width, height, fps, state=state,
+                              exposure_us=exposure_us, gain=gain)
 
     est = TargetEstimator(board, min_markers=min_markers)
     pub = ChannelPublisher(topic, String_)
@@ -400,9 +528,11 @@ def main():
     period = 1.0 / max(args.rate, 1e-3)
     n_pub = 0
     t_last_log = time.time()
+    n_no_waist = 0
     while True:
         t0 = time.time()
-        img = cam.read()
+        img, waist = cam.read()
+        t_cap = time.time()
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         vis = img if args.show else None
 
@@ -421,9 +551,15 @@ def main():
                 "err": round(e["err"], 3),
             })
 
-        msg = json.dumps({"stamp": time.time(), "frame": "camera_optical",
-                          "targets": targets}, separators=(",", ":"))
-        pub.Write(String_(data=msg))
+        payload = {"stamp": t_cap, "frame": "camera_optical",
+                   "targets": targets}
+        if waist is not None:
+            # Waist yaw/roll/pitch at capture time; the controller runs the
+            # camera->pelvis FK with these instead of its own tick's joints.
+            payload["waist"] = [round(v, 6) for v in waist]
+        else:
+            n_no_waist += 1
+        pub.Write(String_(data=json.dumps(payload, separators=(",", ":"))))
         n_pub += 1
 
         if args.show:
@@ -432,9 +568,11 @@ def main():
                 break
         if time.time() - t_last_log > 2.0:
             ids = [t["id"] for t in targets]
+            note = f", {n_no_waist} frames without waist" if n_no_waist else ""
             print(f"[perception] {n_pub / (time.time() - t_last_log):5.1f} Hz, "
-                  f"targets in view: {ids}")
+                  f"targets in view: {ids}{note}")
             n_pub = 0
+            n_no_waist = 0
             t_last_log = time.time()
 
         dt = time.time() - t0
