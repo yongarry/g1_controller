@@ -229,6 +229,11 @@ footstep:
     reach_radius: 0.05    # [m] a goal this close counts as reached
     reach_yaw: 0.1       # [rad] heading tolerance (goals that specify a yaw)
     align_radius: 1.0    # [m] start blending into the goal heading here
+    # Largest com_z change per footstep. The commanded height is rate-limited
+    # toward the active goal's com_z instead of jumping to it, which would ask
+    # the preview controller for the whole change inside one dsp_t (0.15 s).
+    # At 0.02 a 0.1 m crouch is reached over 5 steps. 0 applies it immediately.
+    com_z_rate: 0.02
 
     # What the robot does while stopped at each goal.
     stop:

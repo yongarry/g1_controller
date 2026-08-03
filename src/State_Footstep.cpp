@@ -243,6 +243,7 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         gc.reach_radius = yaml_get(gn, "reach_radius", gc.reach_radius);
         gc.reach_yaw    = yaml_get(gn, "reach_yaw", gc.reach_yaw);
         gc.align_radius = yaml_get(gn, "align_radius", gc.align_radius);
+        gc.com_z_rate   = yaml_get(gn, "com_z_rate", gc.com_z_rate);
 
         std::vector<isaaclab::FootstepCommand::Goal> goals;
         if (gn["points"])
@@ -628,10 +629,11 @@ void State_Footstep::enter()
                         upper_motion_done_ = false; // run() takes it from here
                         upper_pose_index_ = reached;
                     }
-                    // Stand at the CoM height the robot walked here with, so the
-                    // stop does not undo that goal's crouch / taller stance.
-                    if (reached >= 0 && reached < (int)command_->goals().size())
-                        standby_com_z = command_->goals()[reached].com_z;
+                    // Stand at the CoM height the robot actually walked here with
+                    // (the rate-limited value, which may still be short of that
+                    // goal's com_z), so the stop does not step the height either
+                    // way.
+                    standby_com_z = command_->com_z();
                     resume_at = clock::now() + std::chrono::duration_cast<clock::duration>(
                         std::chrono::duration<double>(stop_hold_time_));
                     mode = last ? Mode::FINISHED : Mode::AT_GOAL;

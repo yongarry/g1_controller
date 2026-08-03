@@ -205,6 +205,11 @@ public:
         float reach_radius = 0.2f;  // [m] a goal this close counts as reached
         float reach_yaw = 0.1f;     // [rad] heading tolerance (goals with a yaw)
         float align_radius = 1.0f;  // [m] start blending into the goal heading here
+        // [m] largest com_z change per footstep. The commanded height is
+        // rate-limited toward the active goal's com_z instead of jumping to it,
+        // which would ask the preview controller for the whole change inside one
+        // dsp_t. <= 0 applies the goal's com_z immediately.
+        float com_z_rate = 0.02f;
     };
     // `yaw` is the heading to arrive with; has_yaw == false means "pass through
     // this point", leaving the heading free (pure position waypoint).
@@ -236,6 +241,10 @@ public:
     // Raised on the step boundary where a goal was consumed; the caller stops
     // the gait there and clears it by calling reset(keep_goal_progress = true).
     bool goal_arrived() const { return goal_arrived_; }
+    // CoM height offset currently commanded - the rate-limited value on its way
+    // to the active goal's com_z, not that goal's nominal. Stand still at this
+    // to hold the height the robot is actually walking at.
+    float com_z() const { return com_z_current_; }
 
     // Foot world-position source (see deploy.yaml foot_state_source).
     void set_foot_state_source(FootStateSource src) { foot_state_source_ = src; }
@@ -901,6 +910,14 @@ private:
         return w;
     }
 
+    // Move `cur` toward `tgt` by at most `rate` (rate <= 0: jump straight there).
+    static float ramp_toward_(float cur, float tgt, float rate)
+    {
+        const float d = tgt - cur;
+        if (rate <= 0.0f || std::abs(d) <= rate) return tgt;
+        return cur + std::copysign(rate, d);
+    }
+
     // Mean heading of the two feet, i.e. the robot's own yaw.
     static float mean_yaw_(const WorldPose& a, const WorldPose& b)
     {
@@ -1005,18 +1022,23 @@ private:
         }
 
         int gi = goal_index_;
+        float cz = com_z_current_; // ramps forward across the lookahead
         for (int s = 0; s < LA; ++s)
         {
             const float cx = 0.5f * (stance.x + other.x);
             const float cy = 0.5f * (stance.y + other.y);
             advance_goal_(gi, cx, cy, mean_yaw_(stance, other), false);
 
-            // The CoM height offset is a property of the goal being walked to,
-            // so it changes as the plan crosses from one goal to the next.
+            // The CoM height offset is a property of the goal being walked to, so
+            // it changes as the plan crosses from one goal to the next - but it
+            // is approached one com_z_rate step at a time rather than jumped to.
             foot_command_[s] = (gi < (int)goals_.size())
                 ? build_goal_step_(stance, cx, cy, goals_[gi], phase_indicator_[s])
                 : station_keep_step_(phase_indicator_[s]);
-            com_z_command_[s] = (gi < (int)goals_.size()) ? goals_[gi].com_z : input_.com_z;
+            const float cz_target = (gi < (int)goals_.size()) ? goals_[gi].com_z : input_.com_z;
+            cz = ramp_toward_(cz, cz_target, gcfg_.com_z_rate);
+            com_z_command_[s] = cz;
+            if (s == 0) com_z_current_ = cz; // only slot 0 is committed
 
             other = stance;
             stance = apply_step_(stance, foot_command_[s]);
@@ -1037,6 +1059,7 @@ private:
         {
             goal_index_ = 0;
             goals_done_logged_ = false;
+            com_z_current_ = 0.0f; // start from the natural standing height
             phase_indicator_[0] = cfg_.start_phase_indicator;
             for (int i = 0; i < LA - 1; ++i) phase_indicator_[i + 1] = 1 - phase_indicator_[i];
         }
@@ -1324,6 +1347,7 @@ private:
     int goal_index_ = 0;             // active goal (== goals_.size(): all reached)
     bool goal_arrived_ = false;      // a goal was consumed on this step boundary
     bool goals_done_logged_ = false;
+    float com_z_current_ = 0.0f;     // rate-limited com_z actually commanded
     WorldPose prev_stance_world_;    // world pose of the foot that is swinging
 
     // global command mode (absolute world-frame foot targets)
