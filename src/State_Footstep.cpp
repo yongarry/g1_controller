@@ -563,6 +563,13 @@ void State_Footstep::enter()
                 if (walk_started_)
                 {
                     command_->reset();
+                    // Seed the observation history with the first WALKING frame.
+                    // Without this the policy starts a step with up to
+                    // history_length * skip_history_tick frames of standby
+                    // observations (frozen phase, zero foot command) still in
+                    // the buffer - a transient it never saw in training, where
+                    // every episode begins from a reset history.
+                    env->reset();
                     mode = Mode::WALKING;
                     spdlog::info("[Footstep] walk start");
                 }
@@ -577,6 +584,7 @@ void State_Footstep::enter()
                 else if (clock::now() >= resume_at)
                 {
                     command_->reset(/*keep_goal_progress=*/true);
+                    env->reset(); // seed the history with the walking frame (see above)
                     mode = Mode::WALKING;
                 }
             }
