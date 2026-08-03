@@ -300,14 +300,34 @@ public:
         compute_command_vec_();
     }
 
-    // Standby (pre-walk hold): emit a command that tells the policy to stand
-    // still - the default leg pose as the IK target, the phase frozen at the
-    // start of a step, and a zero foot-step command. Called instead of
-    // compute() while State_Footstep waits for the operator to start walking.
-    // `q_default` is the 12-dim default leg pose (SDK 0..11 order).
-    void hold_standby(const Eigen::VectorXf& q_default)
+    // Standby: emit a command that tells the policy to stand still - both feet
+    // held where they currently are, the pelvis at the height `com_z` asks for,
+    // the phase frozen at the start of a step and a zero foot-step command.
+    // Called instead of compute() while State_Footstep waits for the operator to
+    // start walking, and while the gait is stopped at a goal.
+    //
+    // The IK target is SOLVED for `com_z` rather than snapped to the default
+    // joint pose: the robot may have walked its way to a crouch (or a taller
+    // stance) via the active goal's com_z, and standing still must not silently
+    // undo that. This pose is the static equilibrium of the walking reference -
+    // pelvis over the midpoint of the two feet at vrp_height + com_z - so the
+    // target stays continuous across the gait/stop boundary.
+    void hold_standby(float com_z)
     {
-        for (int i = 0; i < 12; ++i) command_vec_[i] = q_default(i);
+        update_link_states_(); // compute() is not running while standing by
+
+        math::Vec3 pelv_pos_stance(0.5f * swing_foot_stance_pos_[0],
+                                   0.5f * swing_foot_stance_pos_[1],
+                                   cfg_.vrp_height + com_z + cfg_.pelv_com_offset);
+        // heading settles at the mean of the two feet, as it does during DSP
+        const float mid_yaw = 0.5f * math::wrap_to_pi(
+            math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
+        const math::Quat pelv_quat_stance = math::quat_from_euler_xyz(0.0f, 0.0f, mid_yaw);
+
+        solve_leg_ik_(pelv_pos_stance, pelv_quat_stance,
+                      swing_foot_stance_pos_, swing_foot_stance_quat_);
+
+        for (int i = 0; i < 12; ++i) command_vec_[i] = target_joint_pos_(i);
         command_vec_[12] = 1.0f; // cos(0)
         command_vec_[13] = 0.0f; // sin(0)
         const std::array<float, 9> fc = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.7f, 0.15f, 0.08f};
@@ -1141,6 +1161,17 @@ private:
         // target swing foot in stance frame (pose only)
         generate_feet_ref_trajectory_();
 
+        solve_leg_ik_(pelv_pos_stance, pelv_quat_stance,
+                      target_swing_stance_pos_, target_swing_stance_quat_);
+    }
+
+    // Solve both legs for a desired pelvis pose and swing-foot pose, all given in
+    // the stance-foot frame (the stance foot itself is the frame origin), and
+    // write the 12 joint targets. Shared by the walking reference and by the
+    // standby hold.
+    void solve_leg_ik_(const math::Vec3& pelv_pos_stance, const math::Quat& pelv_quat_stance,
+                       const math::Vec3& swing_pos_stance, const math::Quat& swing_quat_stance)
+    {
         // stance foot reference pose in stance frame = origin / identity
         const math::Vec3 stance_pose_pos = math::Vec3::Zero();
         const math::Quat stance_pose_quat = math::Quat::Identity();
@@ -1150,10 +1181,10 @@ private:
         math::Quat l_quat_stance, r_quat_stance;
         if (phase_indicator_[0] == 0) { // left is stance
             l_pos_stance = stance_pose_pos;  l_quat_stance = stance_pose_quat;
-            r_pos_stance = target_swing_stance_pos_; r_quat_stance = target_swing_stance_quat_;
+            r_pos_stance = swing_pos_stance; r_quat_stance = swing_quat_stance;
         } else { // right is stance
             r_pos_stance = stance_pose_pos;  r_quat_stance = stance_pose_quat;
-            l_pos_stance = target_swing_stance_pos_; l_quat_stance = target_swing_stance_quat_;
+            l_pos_stance = swing_pos_stance; l_quat_stance = swing_quat_stance;
         }
 
         // express foot targets in the pelvis (base) frame at desired pelvis pose

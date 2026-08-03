@@ -250,9 +250,10 @@ Footstep --[LT+B]--> Passive ,  Footstep --[RB+X]--> Velocity
 ### Starting and stopping
 
 Entering `Footstep` does **not** start walking. The state holds a *standby*
-command — phase frozen at the start of a step, IK target at the default joint
-pose, zero foot command — so the robot stands still while already running the
-footstep policy. Press **Y** to start:
+command — phase frozen at the start of a step, zero foot command, and an IK
+target solved for standing still (both feet where they are, pelvis at
+`vrp_height + com_z + pelv_com_offset` above them) — so the robot stands while
+already running the footstep policy. Press **Y** to start:
 
 ```text
 FixStand --[RB+Y]--> Footstep (standing, standby) --[Y]--> walking
@@ -399,6 +400,12 @@ used before the Y press), the upper body interpolates to that goal's
 `stop.upper_body_pose` over `move_time`, and after `hold_time` the robot walks on
 **holding that pose**. The last goal ends stopped for good. A goal with no pose
 entry still stops, keeping whatever pose is already held.
+
+The standby pose is solved for the `com_z` of the goal just reached, so stopping
+does not undo the crouch (or taller stance) the robot walked there with; the
+change to the next leg's `com_z` then happens over its first steps. At `com_z = 0`
+this pose coincides with `default_joint_pos`, which is why the pre-walk standby
+looks the same as a plain default hold.
 
 **Frame.** The goal frame is anchored on the robot itself at the moment walking
 starts: the midpoint of its two feet is `x, y = 0, 0` and it faces `yaw = 0`. That

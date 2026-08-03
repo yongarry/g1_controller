@@ -531,7 +531,7 @@ void State_Footstep::enter()
         update_base_from_odom();
         if (command_source_) command_->set_input(command_source_->input());
         feed_vision();
-        command_->hold_standby(env->robot->data.default_joint_pos);
+        command_->hold_standby(0.0f);
         env->reset();
 
         // STANDBY -> (Y) -> WALKING -> (goal reached) -> AT_GOAL -> WALKING ...
@@ -540,6 +540,10 @@ void State_Footstep::enter()
         enum class Mode { STANDBY, WALKING, AT_GOAL, FINISHED };
         Mode mode = Mode::STANDBY;
         auto resume_at = clock::now();
+        // CoM height to stand at: 0 before the first step, then the com_z of the
+        // goal just reached, so stopping does not undo the crouch the robot
+        // walked there with.
+        float standby_com_z = 0.0f;
 
         while (policy_thread_running)
         {
@@ -551,13 +555,11 @@ void State_Footstep::enter()
             if (command_source_) command_->set_input(command_source_->input());
             feed_vision();
 
-            const Eigen::VectorXf& q_default = env->robot->data.default_joint_pos;
-
-            // Standby / stopped: the policy runs on a frozen-phase, default-pose
+            // Standby / stopped: the policy runs on a frozen-phase, stand-still
             // command so it holds the stance instead of stepping.
             if (mode == Mode::STANDBY)
             {
-                command_->hold_standby(q_default);
+                command_->hold_standby(standby_com_z);
                 if (walk_started_)
                 {
                     command_->reset();
@@ -567,7 +569,7 @@ void State_Footstep::enter()
             }
             else if (mode == Mode::AT_GOAL)
             {
-                command_->hold_standby(q_default);
+                command_->hold_standby(standby_com_z);
                 // Hold until the upper body has finished moving, then pause.
                 if (!upper_motion_done_)
                     resume_at = clock::now() + std::chrono::duration_cast<clock::duration>(
@@ -580,7 +582,7 @@ void State_Footstep::enter()
             }
             else if (mode == Mode::FINISHED)
             {
-                command_->hold_standby(q_default);
+                command_->hold_standby(standby_com_z);
             }
 
             if (mode == Mode::WALKING)
@@ -612,12 +614,16 @@ void State_Footstep::enter()
                         upper_motion_done_ = false; // run() takes it from here
                         upper_pose_index_ = reached;
                     }
+                    // Stand at the CoM height the robot walked here with, so the
+                    // stop does not undo that goal's crouch / taller stance.
+                    if (reached >= 0 && reached < (int)command_->goals().size())
+                        standby_com_z = command_->goals()[reached].com_z;
                     resume_at = clock::now() + std::chrono::duration_cast<clock::duration>(
                         std::chrono::duration<double>(stop_hold_time_));
                     mode = last ? Mode::FINISHED : Mode::AT_GOAL;
-                    command_->hold_standby(q_default);
-                    spdlog::info("[FootGoal] stopped at goal {}{}", reached + 1,
-                                 last ? " (last goal: staying stopped)" : "");
+                    command_->hold_standby(standby_com_z);
+                    spdlog::info("[FootGoal] stopped at goal {} (com_z={:.3f}){}", reached + 1,
+                                 standby_com_z, last ? ", last goal: staying stopped" : "");
                 }
                 else
                 {
