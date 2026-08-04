@@ -7,8 +7,8 @@
 #   isaaclab_dyros/scripts/rsl_rl/export_footstep_deploy.py
 
 # ONNX under <policy_dir>/exported/ (State_Footstep loads this by name).
-policy_file: 260803_2253_2d.onnx
-# policy_file: 260801_2338_2d.onnx
+# policy_file: 260803_2253_2d.onnx
+policy_file: 260723_1736.onnx
 # policy_file: 260802_0625_3d.onnx
 
 # --- lower body (action manager) ---
@@ -149,7 +149,7 @@ footstep:
   #                  seen, then walks the two nearest feasible targets.
   #   "goal"       - walk to the world-frame goal points listed under `goal:`
   #                  below, one after another (see that section).
-  command_source: csv # joystick | csv | csv_global | vision | goal
+  command_source: csv_global # joystick | csv | csv_global | vision | goal
   # Local per-step commands (command_source == csv), relative to the project dir.
   csv_path: config/footcommands.csv
   # Absolute world-frame targets (command_source == csv_global), relative to the
