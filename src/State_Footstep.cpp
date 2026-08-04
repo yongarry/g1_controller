@@ -7,6 +7,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <ctime>
+#include <filesystem>
 #include <map>
 #include <iomanip>
 
@@ -398,6 +400,18 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         if (lp.is_relative()) lp = param::proj_dir / lp;
         open_log_file(lp.string());
     }
+
+    // Per-step tracking evaluation. Set `footstep: eval_file: ""` to disable.
+    // The file itself is opened on enter() with a timestamp suffix so startup
+    // (which constructs every FSM state) does not truncate sibling logs.
+    std::string eval_path = fs["eval_file"] ? fs["eval_file"].as<std::string>()
+                                            : std::string("log/footstep_eval.csv");
+    if (!eval_path.empty())
+    {
+        std::filesystem::path ep = eval_path;
+        if (ep.is_relative()) ep = param::proj_dir / ep;
+        eval_path_ = ep.string();
+    }
 }
 
 void State_Footstep::open_log_file(const std::string& path)
@@ -409,7 +423,9 @@ void State_Footstep::open_log_file(const std::string& path)
         return;
     }
     log_file_ << std::fixed << std::setprecision(6);
-    // Column layout (tab separated), mirroring tocabi cc.cpp writeFile:
+    // Column layout (tab separated). Existing columns preserved for plotting.ipynb;
+    // world-frame verification columns appended (stance_world_ odometry frame),
+    // matching tocabi commands.py data.txt logging.
     log_file_ << "tick\twalking_tick"
                  "\tref_zmp_x\tref_zmp_y\tref_zmp_z"
                  "\ttarget_com_stance_x\ttarget_com_stance_y\ttarget_com_stance_z"
@@ -417,9 +433,74 @@ void State_Footstep::open_log_file(const std::string& path)
                  "\tcom_global_x\tcom_global_y\tcom_global_z"
                  "\tlfoot_x\tlfoot_y\tlfoot_z\trfoot_x\trfoot_y\trfoot_z"
                  "\ttarget_com_global_x\ttarget_com_global_y\ttarget_com_global_z"
-                 "\tq_leg_desired[0..11]\tq_leg_meas[0..11]\n";
+                 "\tq_leg_desired[0..11]\tq_leg_meas[0..11]"
+                 "\tphase_indicator"
+                 "\tswing_target_x\tswing_target_y\tswing_target_z"
+                 "\tref_vrp_world_x\tref_vrp_world_y\tref_vrp_world_z"
+                 "\ttarget_com_world_x\ttarget_com_world_y\ttarget_com_world_z"
+                 "\tcom_world_x\tcom_world_y\tcom_world_z"
+                 "\tstance_foot_x\tstance_foot_y\tstance_foot_z"
+                 "\tswing_foot_x\tswing_foot_y\tswing_foot_z\n";
     log_enabled_ = true;
     spdlog::info("[FootLog] logging to '{}'.", path);
+}
+
+// One row per completed footstep: what was commanded, what the foot actually
+// landed on, and the difference - all in the stance-foot frame, the frame the
+// command itself is expressed in. This is the data cmd/eval_footstep.py reads.
+static std::filesystem::path stamp_eval_path_(const std::filesystem::path& template_path)
+{
+    // log/footstep_eval.csv -> log/footstep_eval_YYMMDD_HHMMSS.csv
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+    localtime_r(&t, &tm);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%y%m%d_%H%M%S", &tm);
+    return template_path.parent_path() /
+           (template_path.stem().string() + "_" + buf + template_path.extension().string());
+}
+
+void State_Footstep::open_eval_file(const std::string& path)
+{
+    if (eval_file_.is_open()) eval_file_.close();
+    eval_enabled_ = false;
+
+    std::filesystem::path stamped = stamp_eval_path_(path);
+    if (!stamped.parent_path().empty())
+        std::filesystem::create_directories(stamped.parent_path());
+
+    eval_file_.open(stamped.string(), std::ios::out | std::ios::trunc);
+    if (!eval_file_.is_open())
+    {
+        spdlog::warn("[FootEval] could not open '{}': step evaluation disabled.", stamped.string());
+        return;
+    }
+    eval_file_ << std::fixed << std::setprecision(6);
+    eval_file_ << "step,foot,"
+                  "cmd_x,cmd_y,cmd_yaw,"
+                  "meas_x,meas_y,meas_yaw,"
+                  "err_x,err_y,err_yaw,"
+                  "ssp_t,dsp_t,height\n";
+    eval_enabled_ = true;
+    spdlog::info("[FootEval] per-step tracking error -> '{}'.", stamped.string());
+}
+
+void State_Footstep::write_eval_row()
+{
+    if (!eval_enabled_) return;
+    const auto& c = *command_;
+    const isaaclab::math::Vec3& cmd = c.last_step_command();
+    const isaaclab::math::Vec3& meas = c.last_step_measured();
+    const isaaclab::math::Vec3& err = c.last_step_error();
+    const isaaclab::math::Vec3& tim = c.last_step_timing(); // [ssp_t, dsp_t, height]
+
+    eval_file_ << c.step_counter() << "," << (c.last_step_swing_right() ? "R" : "L") << ","
+               << cmd[0] << "," << cmd[1] << "," << cmd[2] << ","
+               << meas[0] << "," << meas[1] << "," << meas[2] << ","
+               << err[0] << "," << err[1] << "," << err[2] << ","
+               << tim[0] << "," << tim[1] << "," << tim[2] << "\n";
+    eval_file_.flush(); // a run is often ended with Ctrl+C
 }
 
 void State_Footstep::write_log_row(const Eigen::VectorXf& q_meas)
@@ -433,6 +514,12 @@ void State_Footstep::write_log_row(const Eigen::VectorXf& q_meas)
     const isaaclab::math::Vec3 lfoot = c.left_foot_pos();
     const isaaclab::math::Vec3 rfoot = c.right_foot_pos();
     const isaaclab::math::Vec3 tgt_com_gl = c.target_com_global();
+    const isaaclab::math::Vec3 swing_tgt = c.swing_target_world();
+    const isaaclab::math::Vec3 vrp_w = c.ref_vrp_world();
+    const isaaclab::math::Vec3 tgt_com_w = c.target_com_world();
+    const isaaclab::math::Vec3 com_w = c.com_world();
+    const isaaclab::math::Vec3 stance_f = c.stance_foot_world();
+    const isaaclab::math::Vec3 swing_f = c.swing_foot_world();
     const Eigen::VectorXf& q_des = c.target_joint_pos();
 
     log_file_ << log_tick_ << "\t" << c.walking_tick() << "\t";
@@ -444,7 +531,13 @@ void State_Footstep::write_log_row(const Eigen::VectorXf& q_meas)
     log_file_ << tgt_com_gl[0] << "\t" << tgt_com_gl[1] << "\t" << tgt_com_gl[2] << "\t";
     for (int i = 0; i < q_des.size(); ++i) log_file_ << q_des(i) << "\t";
     for (int i = 0; i < 12 && i < q_meas.size(); ++i) log_file_ << q_meas(i) << "\t";
-    log_file_ << "\n";
+    log_file_ << c.phase_indicator0() << "\t";
+    log_file_ << swing_tgt[0] << "\t" << swing_tgt[1] << "\t" << swing_tgt[2] << "\t";
+    log_file_ << vrp_w[0] << "\t" << vrp_w[1] << "\t" << vrp_w[2] << "\t";
+    log_file_ << tgt_com_w[0] << "\t" << tgt_com_w[1] << "\t" << tgt_com_w[2] << "\t";
+    log_file_ << com_w[0] << "\t" << com_w[1] << "\t" << com_w[2] << "\t";
+    log_file_ << stance_f[0] << "\t" << stance_f[1] << "\t" << stance_f[2] << "\t";
+    log_file_ << swing_f[0] << "\t" << swing_f[1] << "\t" << swing_f[2] << "\n";
     ++log_tick_;
 }
 
@@ -455,6 +548,8 @@ void State_Footstep::enter()
     upper_pose_active_ = -1;
     upper_motion_done_ = true;
     upper_target_ = upper_default_;
+
+    if (!eval_path_.empty()) open_eval_file(eval_path_);
 
     // gains for the 12 lower-body (action) joints
     for (int i = 0; i < (int)env->robot->data.joint_ids_map.size(); ++i)
@@ -522,10 +617,10 @@ void State_Footstep::enter()
             }
         };
 
-        // initial reset. Except for csv_global (see auto_start below) the planner
-        // is NOT reset here: the state enters in standby and command_->reset()
-        // runs at the moment walking starts, so it anchors on the state the
-        // robot is in then.
+        // initial reset. Except for the scripted sources (see auto_start below)
+        // the planner is NOT reset here: the state enters in standby and
+        // command_->reset() runs at the moment walking starts, so it anchors on
+        // the state the robot is in then.
         env->robot->update();
         load_full_state(q, qd);
         kin_->set_state(q, qd);
@@ -533,10 +628,11 @@ void State_Footstep::enter()
         update_base_from_odom();
         if (command_source_) command_->set_input(command_source_->input());
         feed_vision();
-        // csv_global replays a fixed plan authored in its own world frame, so it
-        // starts walking as soon as the state is entered - there is nothing for
-        // the operator to aim first. Every other source waits in standby.
-        const bool auto_start = command_->global_mode();
+        // A scripted plan (csv, csv_global) needs no aiming, so it starts walking
+        // as soon as the state is entered and stops once the plan is done. The
+        // operator-driven sources wait in standby for the Y press.
+        const int plan_steps = command_source_ ? command_source_->size() : 0;
+        const bool auto_start = command_->global_mode() || plan_steps > 0;
         if (auto_start) command_->reset();
         else            command_->hold_standby(0.0f);
         env->reset();
@@ -608,6 +704,7 @@ void State_Footstep::enter()
                 // per-step landing error report (mirrors tocabi cc.cpp)
                 if (command_->step_completed())
                 {
+                    write_eval_row();
                     const auto& e = command_->last_step_error();
                     spdlog::info("Foot Position error : {:.4f} [m]", std::sqrt(e[0]*e[0] + e[1]*e[1]));
                     spdlog::info(">> X error : {:.4f} [m]", std::abs(e[0]));
@@ -641,13 +738,15 @@ void State_Footstep::enter()
                     spdlog::info("[FootGoal] stopped at goal {} (com_z={:.3f}){}", reached + 1,
                                  standby_com_z, last ? ", last goal: staying stopped" : "");
                 }
-                else if (command_->global_plan_done())
+                else if (command_->global_plan_done() ||
+                         (plan_steps > 0 && command_->step_counter() >= plan_steps))
                 {
-                    // Global plan finished: stop on the foot that just landed and
-                    // hold the default pose rather than marching in place.
+                    // Plan finished: stop on the foot that just landed and hold
+                    // the default pose rather than marching in place forever.
                     mode = Mode::FINISHED;
                     command_->hold_standby(standby_com_z);
-                    spdlog::info("[FootCommand/Global] plan complete: stopping, holding the default pose.");
+                    spdlog::info("[FootCommand] plan complete after {} steps: stopping, "
+                                 "holding the default pose.", command_->step_counter());
                 }
                 else
                 {

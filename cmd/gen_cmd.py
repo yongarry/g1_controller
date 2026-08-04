@@ -26,9 +26,9 @@ _PROJ_DIR = os.path.dirname(_THIS_DIR)
 DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 
 # Trained command ranges (must match footstep deploy.yaml `footstep.ranges`).
-RANGE_X = (0.2, 0.3)     # forward step length [m]
-RANGE_Y = (0.237, 0.237)      # lateral step width (positive magnitude) [m]
-RANGE_Z = (-0.05, 0.1)   # per-step height change [m]
+RANGE_X = (-0.3, 0.4)     # forward step length [m]
+RANGE_Y = (0.2, 0.4)      # lateral step width (positive magnitude) [m]
+RANGE_Z = (-0.0, 0.)   # per-step height change [m]
 RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
@@ -109,6 +109,6 @@ if __name__ == "__main__":
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert_footcommand_2_global.py"), "--input", args.output, "--output", os.path.join(_PROJ_DIR, "config", "footcommands_global.csv")])  
 
     # execute gen_footstep_scene.py to generate footstep cubes in the MuJoCo scene XML
-    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])

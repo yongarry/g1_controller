@@ -10,6 +10,9 @@ FSM:
     Footstep:
       id: 4
       type: Footstep
+    MindYourStep:
+      id: 5
+      type: MindYourStep
 
     Mimic_Dance_102: # uncomment to enable
       id: 101
@@ -40,6 +43,7 @@ FSM:
       Passive: LT + B.on_pressed
       Velocity: RB + X.on_pressed
       Footstep: RB + Y.on_pressed
+      MindYourStep: RB + A.on_pressed
     kp: [
       200., 100., 100., 350., 540., 40.,
       200., 100., 100., 350., 540., 40.,
@@ -54,14 +58,14 @@ FSM:
       10,10,10,10,10,10,10,
       10,10,10,10,10,10,10,
     ]
-    ts: [0, 3]
+    ts: [0, 10]
     qs: [
       [],
-      [ -0.4, 0,0,0.9,-0.5,0,
-        -0.4, 0,0,0.9,-0.5,0,
-      # [ -0.3, 0,0,0.7,-0.4,0,
-        # -0.3, 0,0,0.7,-0.4,0,
-        0,0,0.2,
+      # LowCoM (Footstep): [-0.4,0,0,0.9,-0.5,0, ...] + waist_pitch 0.2
+      # G1_29DOF_custom (MindYourStep):
+      [ -0.2, 0,0,0.5,-0.3,0,
+        -0.2, 0,0,0.5,-0.3,0,
+        0,0,0,
         0.1, 0.2,0,1.1,0,0,0,
         0.1,-0.2,0,1.1,0,0,0
       ]
@@ -80,6 +84,11 @@ FSM:
       Passive: LT + B.on_pressed
       Velocity: RB + X.on_pressed
     policy_dir: config/policy/footstep
+  MindYourStep:
+    transitions:
+      Passive: LT + B.on_pressed
+      Velocity: RB + X.on_pressed
+    policy_dir: config/policy/mindyourstep
   Mimic_Dance_102:
     transitions: 
       Passive: LT + B.on_pressed

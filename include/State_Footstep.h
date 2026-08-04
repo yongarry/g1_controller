@@ -36,6 +36,7 @@ public:
         policy_thread_running = false;
         if (policy_thread.joinable()) policy_thread.join();
         if (log_file_.is_open()) log_file_.close();
+        if (eval_file_.is_open()) eval_file_.close();
     }
 
     // Accessed by the command-backed observation terms (joint_ik_target, phase,
@@ -100,6 +101,17 @@ private:
     std::ofstream log_file_;
     bool log_enabled_ = false;
     long log_tick_ = 0;
+
+    // --- footstep tracking evaluation (one CSV row per completed step) -------
+    // Path template from deploy.yaml (e.g. log/footstep_eval.csv). A timestamped
+    // file is created on enter() so runs do not overwrite each other, and so
+    // constructing this state at controller start does not truncate a sibling
+    // MindYourStep eval file.
+    void open_eval_file(const std::string& path);
+    void write_eval_row();
+    std::string eval_path_;
+    std::ofstream eval_file_;
+    bool eval_enabled_ = false;
 };
 
 REGISTER_FSM(State_Footstep)

@@ -82,6 +82,13 @@ public:
     virtual FootCommandInput input() = 0;
     // Called once when a footstep completes (step boundary). No-op by default.
     virtual void advance() {}
+    // Number of commands in a scripted (finite) source, 0 for an operator-driven
+    // one. A scripted source needs no aiming, so the caller starts walking on
+    // state entry instead of waiting for the operator, and stops once this many
+    // footsteps have been completed. Counting completed steps rather than the
+    // read cursor keeps this exact: the cursor runs ahead by the planner's
+    // lookahead, so it is already at the last row while two steps still remain.
+    virtual int size() const { return 0; }
     // Initial swing-foot phase (0: right swings first, 1: left swings first).
     virtual int start_phase_indicator() const { return 0; }
     virtual const char* name() const = 0;
@@ -157,6 +164,8 @@ public:
             spdlog::info("[FootCommand/CSV] reached end ({} steps); holding last command.", rows_.size());
         }
     }
+
+    int size() const override { return (int)rows_.size(); }
 
     int start_phase_indicator() const override { return start_phase_; }
     const char* name() const override { return "csv"; }

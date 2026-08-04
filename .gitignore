@@ -1,5 +1,5 @@
 build/
 log/*.txt
+log/*.csv
 **__pycache__**
-config/footcommands.csv
-config/footcommands_global.csv
+config/*.csv

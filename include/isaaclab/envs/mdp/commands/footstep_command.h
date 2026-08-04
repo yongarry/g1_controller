@@ -261,6 +261,7 @@ public:
     void reset(bool keep_goal_progress = false)
     {
         command_counter_ = 0;
+        if (!keep_goal_progress) step_counter_ = 0;
         // A fresh resample owns the world anchor, so stop tracking the IMU until
         // it has set one (some resamples call update_link_states_ themselves).
         if (!keep_goal_progress) world_yaw_latched_ = false;
@@ -307,6 +308,12 @@ public:
             last_step_error_[1] = foot_command_[0][1] - swing_foot_stance_pos_[1];
             last_step_error_[2] = math::wrap_to_pi(foot_command_[0][5] - sw_yaw);
             last_step_total_time_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
+            // Keep the raw pair the error was formed from, for evaluation logs.
+            last_step_cmd_ = math::Vec3(foot_command_[0][0], foot_command_[0][1], foot_command_[0][5]);
+            last_step_meas_ = math::Vec3(swing_foot_stance_pos_[0], swing_foot_stance_pos_[1], sw_yaw);
+            last_step_timing_ = math::Vec3(foot_command_[0][6], foot_command_[0][7], foot_command_[0][8]);
+            last_step_swing_right_ = (phase_indicator_[0] == 0);
+            ++step_counter_;
 
             update_command_();
             update_link_states_();
@@ -363,6 +370,18 @@ public:
     const math::Vec3& last_step_error() const { return last_step_error_; }
     // Total duration (ssp + 2*dsp) of that completed step.
     float last_step_total_time() const { return last_step_total_time_; }
+    // The commanded and measured swing-foot landing the error was formed from
+    // (stance frame, [x, y, yaw]); their difference is last_step_error().
+    const math::Vec3& last_step_command() const { return last_step_cmd_; }
+    const math::Vec3& last_step_measured() const { return last_step_meas_; }
+    // Timings that step ran with: [ssp_t, dsp_t, height]. Captured because
+    // foot_command0() has already shifted to the next step by the time the
+    // caller sees step_completed().
+    const math::Vec3& last_step_timing() const { return last_step_timing_; }
+    // True if the foot that just landed was the right one.
+    bool last_step_swing_right() const { return last_step_swing_right_; }
+    // Number of footsteps completed since reset().
+    long step_counter() const { return step_counter_; }
 
     // Current foot command buffer slot 0 (stance frame): [x, y, z, r, p, yaw, ssp, dsp, height].
     const std::array<float, 9>& foot_command0() const { return foot_command_[0]; }
@@ -391,6 +410,22 @@ public:
     math::Vec3 com_global() const { return com_pos_global_; }
     // Target CoM in the (pelvis-anchored) global frame.
     math::Vec3 target_com_global() const { return target_com_global_pos_; }
+
+    // --- accumulated world frame (stance_world_ odometry) --------------------
+    // Same frame as left_foot_pos()/right_foot_pos(). Transforms stance-frame
+    // quantities with the current stance foot world pose (yaw only).
+    math::Vec3 swing_target_world() const { return stance_to_world_(swing_foot_end_stance_pos_); }
+    math::Vec3 ref_vrp_world() const { return stance_to_world_(ref_zmp()); }
+    math::Vec3 target_com_world() const { return stance_to_world_(target_com_stance()); }
+    math::Vec3 com_world() const { return stance_to_world_(com_pos_stance_); }
+    math::Vec3 stance_foot_world() const { return stance_foot_world_pos_(); }
+    math::Vec3 swing_foot_world() const
+    {
+        if (foot_state_source_ == FootStateSource::SIM_ODOM)
+            return foot_world_pos_sim_(swing_side_());
+        return swing_foot_world_pos_();
+    }
+    int phase_indicator0() const { return phase_indicator_.empty() ? 0 : phase_indicator_[0]; }
     // Foot positions in the world frame, resolved to L/R.
     // fk_odometry: accumulated stance_world_ + per-tick FK swing measurement.
     // sim_odom:    odom base position + IMU-rotated FK foot offset (each tick).
@@ -426,6 +461,14 @@ private:
     // --- accumulated world frame (for logging & the global command mode) -----
     // The current stance foot sits at stance_world_; the swing foot is the
     // per-tick FK measurement (stance frame) expressed in that world frame.
+    math::Vec3 stance_to_world_(const math::Vec3& p_stance) const
+    {
+        const float c = std::cos(stance_world_.yaw);
+        const float s = std::sin(stance_world_.yaw);
+        return math::Vec3(stance_world_.x + c * p_stance[0] - s * p_stance[1],
+                          stance_world_.y + s * p_stance[0] + c * p_stance[1],
+                          stance_world_.z + p_stance[2]);
+    }
     math::Vec3 stance_foot_world_pos_() const
     {
         return math::Vec3(stance_world_.x, stance_world_.y, stance_world_.z);
@@ -1324,6 +1367,11 @@ private:
     bool step_completed_ = false;
     // landing error of the last completed footstep (stance frame): [x, y, yaw]
     math::Vec3 last_step_error_ = math::Vec3::Zero();
+    math::Vec3 last_step_cmd_ = math::Vec3::Zero();  // commanded landing [x, y, yaw]
+    math::Vec3 last_step_meas_ = math::Vec3::Zero(); // measured landing  [x, y, yaw]
+    math::Vec3 last_step_timing_ = math::Vec3::Zero(); // [ssp_t, dsp_t, height]
+    bool last_step_swing_right_ = true;
+    long step_counter_ = 0;
     float last_step_total_time_ = 0.0f;
 
     std::vector<std::array<float, 9>> foot_command_;

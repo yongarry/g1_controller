@@ -1,0 +1,108 @@
+# Deploy configuration for the Isaac Lab G1 MindYourStep policy
+# (G1MindYourStepFlatEnvCfg / g1_mind_your_step).
+#
+# ONNX under <policy_dir>/exported/ (obs [1, 58] -> actions [1, 12]).
+# Matches mys_env_cfg.ObservationsCfg.PolicyCfg and LowerJointPositionActionCfg.
+policy_file: policy.onnx
+
+# --- lower body (action manager), SDK 0..11 ---
+joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+# sim.dt 0.005 * decimation 4
+step_dt: 0.02
+stiffness: [100.0, 100.0, 100.0, 150.0, 40.0, 40.0,
+            100.0, 100.0, 100.0, 150.0, 40.0, 40.0]
+damping: [2.0, 2.0, 2.0, 4.0, 2.0, 2.0,
+          2.0, 2.0, 2.0, 4.0, 2.0, 2.0]
+# G1_29DOF_custom_CFG / G1_29DOF_JOINT_CFG
+default_joint_pos: [-0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
+                    -0.2, 0.0, 0.0, 0.5, -0.3, 0.0]
+
+# --- upper body (held at default by State_MindYourStep), SDK 12..28 ---
+upper_body:
+  joint_ids_map: [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+  default_joint_pos: [0.0, 0.0, 0.0,
+                      0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
+                      0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
+  stiffness: [600.0, 600.0, 600.0,
+              40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0,
+              40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
+  damping: [5.0, 5.0, 5.0,
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+actions:
+  LowerJointPositionAction:
+    joint_ids: null
+    clip: null
+    scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    offset: [-0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
+             -0.2, 0.0, 0.0, 0.5, -0.3, 0.0]
+
+# Observation order MUST match G1MindYourStepFlatEnvCfg.ObservationsCfg.PolicyCfg.
+# Dims: ang_vel(3) + grav(3) + q_rel(12) + qd(12) + last_proc_act(12) + foot_cmd(16) = 58.
+observations:
+  base_ang_vel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 1
+  projected_gravity:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 1
+  joint_pos_ordered_rel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 1
+  joint_vel_ordered:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 1
+  last_processed_action:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 1
+  mys_foot_command:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 1
+
+# --- gait command (joystick teleop OR csv replay) ---
+# Generate the CSV from a Footstep plan with:
+#   python3 cmd/convert2mys.py
+# Then summarize landing error with:
+#   python3 cmd/eval_footstep.py --mys
+gait:
+  feet_distance: 0.2     # [m] nominal lateral stance width (joystick still mode)
+  # half-step duration = 0.5 / f. Use 0.5 Hz so one foothold ≈ 1.0 s
+  # (matches typical footcommands ssp_t + 2*dsp_t = 1.0 s).
+  gait_frequency: 1.0
+  stop_steps: 4          # joystick: half-steps to settle before standing still
+  vert_max: 0.5          # [m] joystick full stick forward/backward
+  lat_max: 0.3           # [m] joystick full stick lateral
+  yaw_max: 0.5236        # [rad] joystick full stick yaw (~pi/6)
+  deadzone: 0.1
+
+  # command_source: joystick | csv
+  command_source: csv
+  # Local per-step commands (same schema as footcommands.csv). Relative to proj dir.
+  csv_path: config/footcommands_mys.csv
+  # Per-step landing error log template (same schema as footstep_eval.csv).
+  # On enter a timestamped file is created, e.g. log/footstep_eval_mys_260804_162830.csv.
+  # "" disables.
+  eval_file: log/footstep_eval_mys.csv
+
+  # FK for landing measurement (used when command_source == csv)
+  urdf_path: config/urdf/g1_29dof.urdf
+  base_link: pelvis
+  lleg_joints: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint,
+                left_knee_joint, left_ankle_pitch_joint, left_ankle_roll_joint]
+  rleg_joints: [right_hip_pitch_joint, right_hip_roll_joint, right_hip_yaw_joint,
+                right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint]
+  lee_name: left_ankle_roll_link
+  ree_name: right_ankle_roll_link

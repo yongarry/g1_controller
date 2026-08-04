@@ -12,15 +12,20 @@ them through ONNX Runtime, and publishes low-level Unitree motor commands throug
 
 ## Features
 
-- FSM-based controller with `Passive`, `FixStand`, velocity RL, mimic, and footstep policy states.
+- FSM-based controller with `Passive`, `FixStand`, velocity RL, mimic, footstep, and
+  MindYourStep policy states.
 - Deploys exported RL policies from `params/deploy.yaml` and `exported/policy.onnx`.
 - Supports policy directory version discovery, such as `config/policy/velocity/v0`.
 - Uses joystick transition expressions defined in `config/config.yaml`.
 - Footstep deploy with on-device `OnlineFootCommand` (VRP + ZMP preview + Pinocchio IK).
 - Footstep command sources: joystick, CSV replay, world-frame plans, ArUco vision, and
   goal-reaching with per-goal CoM height, arrival heading and upper-body poses.
-- Helper scripts under `cmd/` to generate foot-command CSVs and MuJoCo stepping-stone /
-  goal-marker scenes.
+- MindYourStep deploy: 16-D foothold goal + proprioception → 12 lower-body joints
+  (joystick teleop or CSV replay of the same local footholds as Footstep).
+- Per-step landing-error logs (`log/footstep_eval_<time>.csv` /
+  `log/footstep_eval_mys_<time>.csv`) for Footstep ↔ MindYourStep comparison.
+- Helper scripts under `cmd/` to generate foot-command CSVs, convert them for MYS,
+  summarize tracking error, and build MuJoCo stepping-stone / goal-marker scenes.
 - Designed for Unitree G1 29-DoF deployment workflows.
 
 ## Project Layout
@@ -30,21 +35,28 @@ them through ONNX Runtime, and publishes low-level Unitree motor commands throug
 ├── cmd/
 │   ├── gen_cmd.py                    # sample local foot commands -> footcommands.csv
 │   ├── convert_footcommand_2_global.py
+│   ├── convert2mys.py                # footcommands.csv -> footstepcommands_mys.csv
+│   ├── eval_footstep.py              # summarize landing error from eval CSVs
 │   ├── gen_footstep_scene.py         # write stepping stones into MuJoCo scene XML
 │   └── gen_goals.py                  # write goal markers into MuJoCo scene XML
 ├── config/
 │   ├── config.yaml                   # FSM states, transitions, and policy paths
 │   ├── footcommands.csv              # local per-step commands (generated)
+│   ├── footstepcommands_mys.csv      # same plan for MindYourStep CSV replay
 │   ├── footcommands_global.csv       # world-frame targets (generated)
 │   ├── urdf/g1_29dof.urdf
 │   └── policy/                       # exported deploy policies
+│       ├── footstep/v0/
+│       └── mindyourstep/v0/
 ├── include/
 │   ├── FSM/                          # base FSM state classes
 │   └── isaaclab/                     # deploy-side IsaacLab-style runtime helpers
 ├── src/
 │   ├── State_RLBase.cpp              # generic RL policy deploy state
 │   ├── State_Mimic.cpp               # motion/mimic policy deploy state
-│   └── State_Footstep.cpp            # footstep policy + command generator
+│   ├── State_Footstep.cpp            # footstep policy + command generator
+│   └── State_MindYourStep.cpp        # MindYourStep foothold-tracking policy
+├── log/                              # runtime logs (eval CSVs, etc.)
 ├── thirdparty/
 │   └── onnxruntime-linux-x64-1.22.0/
 ├── run_sim.sh                        # launch unitree_mujoco + g1_ctrl together
@@ -68,9 +80,9 @@ Install the system dependencies used by the deploy controller:
 sudo apt install -y libyaml-cpp-dev libboost-all-dev libeigen3-dev libspdlog-dev libfmt-dev
 ```
 
-The footstep controller (`State_Footstep`) additionally needs
+`State_Footstep` (VRP/IK) and MindYourStep CSV landing eval need
 [Pinocchio](https://github.com/stack-of-tasks/pinocchio) for full-body forward
-kinematics, CoM and Jacobians:
+kinematics (and CoM / Jacobians for Footstep):
 
 ```bash
 # robotpkg (recommended) — see install.pinocchio.org, then:
@@ -189,10 +201,12 @@ The default flow is:
 
 ```text
 Passive --[LT + Up]--> FixStand --[RB + X]--> Velocity
+                     FixStand --[RB + Y]--> Footstep
+                     FixStand --[RB + A]--> MindYourStep
 ```
 
-From the velocity policy, configured transitions can enter mimic states or return
-to `Passive`.
+From the velocity / Footstep / MindYourStep policies, configured transitions can
+return to `Passive` (and between Velocity ↔ Footstep where wired).
 
 Generic RL policies can reuse the `RLBase` state type:
 
@@ -263,10 +277,11 @@ The command generator is reset on the Y press rather than on state entry, so the
 planner and preview controller anchor on the state the robot is actually in the
 moment it starts moving. Re-entering the state returns to standby.
 
-`command_source: csv_global` is the exception: its plan is authored in its own
-world frame and there is nothing for the operator to aim first, so it starts
-walking on state entry and stops back into the standby hold once the last
-footstep of the plan has been executed.
+The scripted sources — `csv` and `csv_global` — are the exception: their plan is
+fixed in advance and there is nothing for the operator to aim first, so they
+start walking on state entry and stop back into the standby hold once the plan
+has been walked (for `csv`, once as many footsteps have completed as the CSV has
+rows).
 
 ### Joystick mode (`command_source: joystick`)
 
@@ -282,7 +297,7 @@ per-step height change).
 | Mode | Description |
 |------|-------------|
 | `joystick` | Operator drives local per-step commands each control tick. |
-| `csv` | Replay local per-step commands from `footstep.csv_path`. |
+| `csv` | Replay local per-step commands from `footstep.csv_path`. Starts on state entry (no Y press) and stops standing after as many footsteps as the CSV has rows. |
 | `csv_global` | Follow absolute world-frame targets from `footstep.global_csv_path`; the planner recomputes the local command from the accumulated stance foot to each target every step (drift-corrected). Starts on state entry (no Y press) and stops standing at the end of the plan. |
 | `goal` | Walk to the world-frame goal points under `footstep.goal`, stopping at each one. See [Goal-reaching mode](#goal-reaching-mode-command_source-goal). |
 | `vision` | ArUco footstep targets estimated online with the head D435i. See [Vision-based footstep targets](#vision-based-footstep-targets-aruco--d435i). |
@@ -553,6 +568,98 @@ Extra care before running `command_source: goal` on hardware:
   edge of the trained range.
 * `vrp_height` / `pelv_com_offset` and the joint gains in `deploy.yaml` are tuned
   for the sim model; re-check them against the physical robot.
+
+### Landing-error evaluation
+
+On every completed footstep the controller appends one row
+(commanded − measured swing landing in the stance-foot frame) to a timestamped
+CSV opened when that state is **entered** (not at controller startup):
+
+| State | File template → stamped example |
+|-------|----------------------------------|
+| Footstep | `log/footstep_eval.csv` → `log/footstep_eval_260804_162830.csv` |
+| MindYourStep | `log/footstep_eval_mys.csv` → `log/footstep_eval_mys_260804_162830.csv` |
+
+Summarize (newest matching file by default):
+
+```bash
+python3 cmd/eval_footstep.py            # latest Footstep eval
+python3 cmd/eval_footstep.py --mys      # latest MindYourStep eval
+python3 cmd/eval_footstep.py log/footstep_eval_*.csv log/footstep_eval_mys_*.csv
+```
+
+## MindYourStep Policy
+
+`State_MindYourStep` deploys the Isaac Lab `G1MindYourStepFlatEnvCfg` policy
+(`isaaclab_dyros` / `g1_mind_your_step`). There is no VRP / preview / IK stage:
+an MLP maps proprioception plus a 16-D foothold goal
+`[l_pos(3), l_orn(4), r_pos(3), r_orn(4), gait_cos, gait_sin]` to the 12
+lower-body joint targets. The upper body is held at its defaults (same pattern
+as Footstep / `LowerJointPositionAction`).
+
+Layout:
+
+```text
+config/policy/mindyourstep/v0/
+├── params/deploy.yaml      # joints, gains, obs layout, gait / CSV params
+└── exported/policy.onnx    # actor obs [1, 58] → actions [1, 12]
+```
+
+### FSM flow
+
+```text
+Passive --[LT+Up]--> FixStand --[RB+A]--> MindYourStep
+MindYourStep --[LT+B]--> Passive ,  MindYourStep --[RB+X]--> Velocity
+```
+
+### Command sources (`deploy.yaml` → `gait.command_source`)
+
+| Mode | Description |
+|------|-------------|
+| `joystick` | Sticks map to step length / lateral / yaw clamps (`+ly` forward, `-lx` left, `-rx` turn left). Deadzone → stand still. |
+| `csv` | Replay local per-step footholds from `gait.csv_path` (same semantics as Footstep `footcommands.csv`). Starts on state entry; after the last step the gait holds still. |
+
+CSV columns (identical to Footstep local commands):
+
+```text
+foot,step_x,step_y,step_z,step_yaw,ssp_t,dsp_t,height
+```
+
+`step_*` is the swing-foot displacement in the **stance-foot yaw frame**
+(`step_y` is a positive magnitude; sign comes from `foot` L/R). Timing columns
+are kept for eval logging; the gait clock is `gait.gait_frequency` (half-step
+duration = `0.5 / frequency`). Use `0.5` Hz when the Footstep plan has
+`ssp_t + 2*dsp_t ≈ 1.0` s so both policies take one foothold per second.
+
+### Comparing Footstep vs MindYourStep on the same plan
+
+```bash
+# 1) one local plan for both controllers
+python3 cmd/gen_cmd.py 100 --seed 0
+python3 cmd/convert2mys.py    # -> config/footstepcommands_mys.csv
+
+# 2) Footstep: deploy.yaml command_source: csv , csv_path: config/footcommands.csv
+./run_sim.sh                  # FixStand -> RB+Y -> Footstep (auto-starts on CSV)
+python3 cmd/eval_footstep.py
+
+# 3) MindYourStep: gait.command_source: csv , csv_path: config/footstepcommands_mys.csv
+./run_sim.sh                  # FixStand -> RB+A -> MindYourStep
+python3 cmd/eval_footstep.py --mys
+```
+
+`convert2mys.py` copies the Footstep local CSV into the MindYourStep replay file
+(and prints the `gait_frequency` that matches the plan's step period). Landing
+errors are logged with the same column schema so `eval_footstep.py` can pool or
+compare runs.
+
+### Deployment notes
+
+* Obs order must match training `PolicyCfg`: `base_ang_vel`, `projected_gravity`,
+  `joint_pos_ordered_rel` (12 legs), `joint_vel_ordered`, `last_processed_action`,
+  `mys_foot_command` (16) — total 58. Action scale `0.5` with default offsets.
+* Enter from `FixStand` so the default pose matches `G1_29DOF_custom_CFG`.
+* CSV landing measurement uses Pinocchio FK of the ankle frames in the stance
+  yaw frame (same relative definition as Footstep eval).
 
 ## Acknowledgements
 

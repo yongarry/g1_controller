@@ -4,6 +4,7 @@
 #include "FSM/State_RLBase.h"
 #include "State_Mimic.h"
 #include "State_Footstep.h"
+#include "State_MindYourStep.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
