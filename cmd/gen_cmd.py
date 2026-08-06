@@ -28,8 +28,8 @@ DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 # Trained command ranges (must match footstep deploy.yaml `footstep.ranges`).
 RANGE_X = (0.2, 0.3)     # forward step length [m]
 RANGE_Y = (0.237, 0.237)      # lateral step width (positive magnitude) [m]
-RANGE_Z = (-0.05, 0.1)   # per-step height change [m]
-RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
+RANGE_Z = (-0.0, 0.)   # per-step height change [m]
+RANGE_YAW = (-0., 0.)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]

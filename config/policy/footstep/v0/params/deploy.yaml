@@ -8,8 +8,9 @@
 
 # ONNX under <policy_dir>/exported/ (State_Footstep loads this by name).
 # policy_file: 260803_2253_2d.onnx
-policy_file: 260723_1736.onnx
-# policy_file: 260802_0625_3d.onnx
+# policy_file: 260723_1736.onnx
+# policy_file: 260805_1644_2d.onnx
+policy_file: 260803_2253_2d_hardrew.onnx
 
 # --- lower body (action manager) ---
 joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
@@ -134,7 +135,7 @@ footstep:
   # Foot world-position source (logging & global-plan stance tracking):
   #   fk_odometry - FK landing accumulation (default, hardware)
   #   sim_odom    - MuJoCo ground truth: rt/odommodestate base + FK foot offset
-  foot_state_source: sim_odom  # fk_odometry | sim_odom
+  foot_state_source: fk_odometry  # fk_odometry | sim_odom
   sim_odom_topic: rt/odommodestate
 
   # Foot-command source:
@@ -149,7 +150,7 @@ footstep:
   #                  seen, then walks the two nearest feasible targets.
   #   "goal"       - walk to the world-frame goal points listed under `goal:`
   #                  below, one after another (see that section).
-  command_source: csv_global # joystick | csv | csv_global | vision | goal
+  command_source: goal # joystick | csv | csv_global | vision | goal
   # Local per-step commands (command_source == csv), relative to the project dir.
   csv_path: config/footcommands.csv
   # Absolute world-frame targets (command_source == csv_global), relative to the
@@ -223,7 +224,7 @@ footstep:
     # (G13DFootFlatEnvCfg.commands.foot_commands.ranges.com_z); staying inside
     # that band keeps the CoM height in distribution.
     points:
-      - [1, -1.0, 0.0, -0.2]     # walk here crouched
+      - [1, -1.0, 0.0, -0.1]     # walk here crouched
       - [2, 1, 1.5708, 0.05]    # then walk here standing taller
       - [3, 0, 0.0, 0.0]    # then walk here standing taller
     step_x_max: 0.2      # [m] nominal (max) forward step
