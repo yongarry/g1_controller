@@ -9,8 +9,8 @@
 # ONNX under <policy_dir>/exported/ (State_Footstep loads this by name).
 # policy_file: 260803_2253_2d.onnx
 # policy_file: 260723_1736.onnx
-# policy_file: 260805_1644_2d.onnx
-policy_file: 260803_2253_2d_hardrew.onnx
+policy_file: 260710_0204_2d_pitch0.onnx
+# policy_file: 260803_2253_2d_hardrew.onnx
 
 # --- lower body (action manager) ---
 joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
@@ -225,7 +225,7 @@ footstep:
     # that band keeps the CoM height in distribution.
     points:
       - [1, -1.0, 0.0, -0.1]     # walk here crouched
-      - [2, 1, 1.5708, 0.05]    # then walk here standing taller
+      - [2, 1, 1.5708, 0.0]    # then walk here standing taller
       - [3, 0, 0.0, 0.0]    # then walk here standing taller
     step_x_max: 0.2      # [m] nominal (max) forward step
     step_y: 0.237        # [m] nominal lateral step width

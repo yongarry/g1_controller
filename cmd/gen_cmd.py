@@ -15,6 +15,7 @@
 #   python3 cmd/gen_cmd.py 20 --start L --seed 0
 #   python3 cmd/gen_cmd.py 12 --x -0.1 0.2 --yaw -0.1 0.1 --y 0.22 0.26 --z -0.1 0.15
 #   python3 cmd/gen_cmd.py 8 --no-stop -o /tmp/fc.csv
+#   python3 cmd/gen_cmd.py 10 --real              # real robot: skip MuJoCo terrain XML
 
 import argparse
 import csv
@@ -84,6 +85,8 @@ if __name__ == "__main__":
     p.add_argument("--height", type=float, default=0.08, help="swing apex height [m]")
     p.add_argument("--no-stop", action="store_true",
                    help="do not force the last step to be a stop step")
+    p.add_argument("--real", action="store_true",
+                   help="real robot: skip MuJoCo rocky-mountain scene generation")
     args = p.parse_args()
 
     if args.step <= 0:
@@ -109,6 +112,8 @@ if __name__ == "__main__":
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert_footcommand_2_global.py"), "--input", args.output, "--output", os.path.join(_PROJ_DIR, "config", "footcommands_global.csv")])  
 
     # execute gen_footstep_scene.py to generate footstep cubes in the MuJoCo scene XML
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "convert2mys.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
+    if not args.real:
+        subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
