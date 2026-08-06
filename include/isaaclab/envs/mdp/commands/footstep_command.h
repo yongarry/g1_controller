@@ -355,10 +355,11 @@ public:
         command_vec_[13] = 0.0f; // sin(0)
         const std::array<float, 9> fc = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.7f, 0.15f, 0.08f};
         for (int i = 0; i < 9; ++i) command_vec_[14 + i] = fc[i];
+        command_vec_[23] = com_z;
     }
 
-    // 23-dim command: [ik_target(12), phase_cos, phase_sin, foot_command0(9)]
-    const std::array<float, 23>& command() const { return command_vec_; }
+    // 24-dim command: [ik_target(12), phase_cos, phase_sin, foot_command0(9), com_z(1)]
+    const std::array<float, 24>& command() const { return command_vec_; }
 
     // True for the tick on which a footstep just completed (a new step was
     // appended). Used to advance an external FootCommandSource (e.g. CSV).
@@ -1348,6 +1349,7 @@ private:
         command_vec_[12] = c;
         command_vec_[13] = s;
         for (int i = 0; i < 9; ++i) command_vec_[14 + i] = foot_command_[0][i];
+        command_vec_[23] = com_z_command_[0];
     }
 
 public:
@@ -1441,7 +1443,7 @@ private:
     math::Quat target_swing_stance_quat_ = math::Quat::Identity();
 
     Eigen::VectorXf target_joint_pos_;
-    std::array<float, 23> command_vec_;
+    std::array<float, 24> command_vec_;
 };
 
 } // namespace isaaclab

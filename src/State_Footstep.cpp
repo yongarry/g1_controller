@@ -16,7 +16,8 @@ isaaclab::FootstepCommand* State_Footstep::command = nullptr;
 
 // ---------------------------------------------------------------------------
 // Command-backed observation terms (read State_Footstep::command).
-// The 23-dim command is [ik_target(12), phase_cos, phase_sin, foot_command0(9)].
+// The 24-dim command is
+//   [ik_target(12), phase_cos, phase_sin, foot_command0(9), com_z_command(1)].
 // ---------------------------------------------------------------------------
 namespace isaaclab
 {
@@ -42,10 +43,18 @@ REGISTER_OBSERVATION(foot_commands_2d)
     return std::vector<float>{c[14], c[15], c[19], c[20], c[21], c[22]};
 }
 
+// Alias of foot_commands (9-dim, no com_z) for existing deploy.yaml policies.
 REGISTER_OBSERVATION(foot_commands_3d)
 {
     const auto& c = State_Footstep::command->command();
-    return std::vector<float>{c.begin() + 14, c.end()};
+    return std::vector<float>(c.begin() + 14, c.begin() + 23);
+}
+
+// foot_commands_w_comz = foot_command0(9) + com_z(1)  [indices 14:24]
+REGISTER_OBSERVATION(foot_commands_3d_w_comz)
+{
+    const auto& c = State_Footstep::command->command();
+    return std::vector<float>(c.begin() + 14, c.begin() + 24);
 }
 
 } // namespace mdp

@@ -79,7 +79,8 @@ public:
             const float d = std::hypot(swing[0][0] - swing_foot_start[0], swing[0][1] - swing_foot_start[1]);
             if (d < cube_diagonal_length_) step_z[0] = swing_foot_start[2];
         }
-        swing[0][2] = stance[0][2] + step_z[0];
+        // h_0 + delta_h_2 + (com_z[1] - com_z[0])
+        swing[0][2] = stance[0][2] + step_z[0] + (com_z[1] - com_z[0]);
         swing[0][3] = stance[0][3] + step_yaw[0];
 
         for (int s = 1; s < LA; ++s)
@@ -89,14 +90,14 @@ public:
             const float sn = std::sin(stance[s][3]);
             swing[s][0] = stance[s][0] + c * step_x[s] - sn * step_y[s];
             swing[s][1] = stance[s][1] + sn * step_x[s] + c * step_y[s];
-            swing[s][2] = stance[s][2] + com_z[s + 1];
+            // swing[s][2] = stance[s][2] + com_z[s + 1];
             float d;
             if (s == 1)
                 d = std::hypot(swing[s][0], swing[s][1]);
             else
                 d = std::hypot(swing[s][0] - stance[s - 2][0], swing[s][1] - stance[s - 2][1]);
             if (d < cube_diagonal_length_) step_z[s] = -step_z[s - 1];
-            swing[s][2] = stance[s][2] + step_z[s];
+            swing[s][2] = stance[s][2] + step_z[s] + (com_z[s + 1] - com_z[s]);
             swing[s][3] = stance[s][3] + step_yaw[s];
         }
 

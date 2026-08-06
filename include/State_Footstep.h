@@ -40,7 +40,8 @@ public:
     }
 
     // Accessed by the command-backed observation terms (joint_ik_target, phase,
-    // foot_commands_2d) defined in State_Footstep.cpp.
+    // foot_commands / foot_commands_w_comz / foot_commands_2d / foot_commands_3d)
+    // defined in State_Footstep.cpp.
     static isaaclab::FootstepCommand* command;
 
 private:
