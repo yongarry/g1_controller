@@ -137,6 +137,17 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     fcfg.pelv_com_offset = fs["pelv_com_offset"].as<float>();
     fcfg.vrp_horizon_length = fs["vrp_horizon_length"].as<float>(5.0f);
     fcfg.preview_horizon_length = fs["preview_horizon_length"].as<float>(2.0f);
+    // Ablation cases: must match the com_generate_type the policy was trained
+    // with (G13DFootEnvCfg / _heuri1 / _heuri2).
+    {
+        const std::string cgt = fs["com_generate_type"].as<std::string>(std::string("prev"));
+        if (cgt == "prev") fcfg.com_generate_type = isaaclab::ComGenerateType::PREV;
+        else if (cgt == "heuri") fcfg.com_generate_type = isaaclab::ComGenerateType::HEURI;
+        else if (cgt == "heuri2") fcfg.com_generate_type = isaaclab::ComGenerateType::HEURI2;
+        else throw std::runtime_error("footstep.com_generate_type must be one of "
+                                      "'prev', 'heuri', 'heuri2', got: " + cgt);
+        spdlog::info("[Footstep] com_generate_type: {}", cgt);
+    }
     fcfg.swing_up_timing = fs["swing_up_timing"].as<float>(0.4f);
     fcfg.swing_down_timing = fs["swing_down_timing"].as<float>(0.5f);
     fcfg.ik_iters = fs["ik_iters"].as<int>(50);

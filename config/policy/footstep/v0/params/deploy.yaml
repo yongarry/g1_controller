@@ -9,8 +9,9 @@
 # ONNX under <policy_dir>/exported/ (State_Footstep loads this by name).
 # policy_file: 260803_2253_2d.onnx
 # policy_file: 260723_1736.onnx
-policy_file: 260710_0204_2d_pitch0.onnx
-# policy_file: 260803_2253_2d_hardrew.onnx
+# policy_file: policy.onnx
+# policy_file: 260728_1011_2d_lcp.onnx
+policy_file: 260803_2253_2d_hardrew.onnx
 
 # --- lower body (action manager) ---
 joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
@@ -117,6 +118,17 @@ footstep:
   # pelv_com_offset: 0.0724
   vrp_horizon_length: 4.0
   preview_horizon_length: 1.6
+  # CoM reference generator - MUST match the com_generate_type the policy above
+  # was trained with (foot_env_cfg.py: G13DFootEnvCfg -> prev,
+  # G13DFootEnvCfg_heuri1 -> heuri, G13DFootEnvCfg_heuri2 -> heuri2).
+  #   prev   - preview control on the VRP reference (default)
+  #   heuri  - phase-based CoM: hold at the double-support midpoint during DSP,
+  #            cubic to the next midpoint during SSP
+  #   heuri2 - phase-based CoM that keeps moving through every phase and sways
+  #            toward the stance foot
+  # The heuristic types bypass the preview controller, so preview_horizon_length
+  # is unused with them.
+  com_generate_type: prev
   swing_up_timing: 0.2
   swing_down_timing: 0.6
   ik_iters: 10
@@ -228,7 +240,7 @@ footstep:
       - [2, 1, 1.5708, 0.0]    # then walk here standing taller
       - [3, 0, 0.0, 0.0]    # then walk here standing taller
     step_x_max: 0.2      # [m] nominal (max) forward step
-    step_y: 0.237        # [m] nominal lateral step width
+    step_y: 0.2        # [m] nominal lateral step width
     step_yaw_max: 0.2    # [rad] nominal (max) per-step turn
     ssp_t: 0.7           # [s] single support time
     dsp_t: 0.15          # [s] double support time

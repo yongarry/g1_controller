@@ -85,7 +85,7 @@ FSM:
     transitions:
       Passive: LT + B.on_pressed
       Velocity: RB + X.on_pressed
-    policy_dir: config/policy/footstep
+    policy_dir: config/policy/footstep/v0
   MindYourStep:
     transitions:
       Passive: LT + B.on_pressed

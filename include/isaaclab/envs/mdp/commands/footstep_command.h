@@ -39,6 +39,17 @@
 namespace isaaclab
 {
 
+// How the CoM reference is generated (FootCommandCfg.com_generate_type).
+// PREV is what the shipped policies were trained with; HEURI / HEURI2 are the
+// ablation cases and must match the com_generate_type the policy was trained
+// with (G13DFootEnvCfg_heuri1 / _heuri2).
+enum class ComGenerateType
+{
+    PREV,   // "prev"   : preview control on the VRP reference
+    HEURI,  // "heuri"  : phase-based CoM, hold - move - hold
+    HEURI2, // "heuri2" : phase-based CoM, always moving, sways toward the stance foot
+};
+
 // How world-frame foot positions are obtained (logging & global-plan stance tracking).
 enum class FootStateSource
 {
@@ -78,6 +89,9 @@ public:
         float pelv_com_offset = 0.0761f;
         float vrp_horizon_length = 5.0f;
         float preview_horizon_length = 2.0f;
+        // Ablation: which CoM reference the policy was trained against. The
+        // heuristic types ignore the preview controller entirely.
+        ComGenerateType com_generate_type = ComGenerateType::PREV;
         float swing_up_timing = 0.4f;
         float swing_down_timing = 0.5f;
         int ik_iters = 50;
@@ -283,6 +297,7 @@ public:
         Eigen::Matrix3f s = Eigen::Matrix3f::Zero();
         s.row(0) = com_pos_stance_.transpose();
         preview_.set_state(s);
+        target_com_stance_ = com_pos_stance_;
         compute_command_vec_();
     }
 
@@ -403,8 +418,9 @@ public:
         if (idx >= vrp_.NL()) idx = vrp_.NL() - 1;
         return vrp_.vrp_ref_firststance[idx];
     }
-    // Target CoM (preview controller output) in the stance frame.
-    math::Vec3 target_com_stance() const { return preview_.state().row(0).transpose(); }
+    // Target CoM in the stance frame (preview controller output, or the
+    // heuristic reference when com_generate_type is not PREV).
+    math::Vec3 target_com_stance() const { return target_com_stance_; }
     // Measured CoM in the stance frame.
     math::Vec3 com_stance() const { return com_pos_stance_; }
     // Measured CoM in the (pelvis-anchored) global frame.
@@ -1185,6 +1201,14 @@ private:
                                  swing_foot_stance_pos_, com_z_command_);
         for (int s = 0; s < LA; ++s) foot_command_[s][2] = vrp_.step_z[s];
 
+        // Ablation: the heuristic CoM reference starts from the current
+        // double-support midpoint (x, y) at the measured CoM height (z), i.e.
+        // the same init state the VRP reference uses.
+        if (cfg_.com_generate_type == ComGenerateType::HEURI)
+            vrp_.generate_com_heuristic_online(vrp_state_stance);
+        else if (cfg_.com_generate_type == ComGenerateType::HEURI2)
+            vrp_.generate_com_heuristic_online2(vrp_state_stance);
+
         swing_foot_start_stance_pos_ = swing_foot_stance_pos_;
         swing_foot_start_stance_quat_ = swing_foot_stance_quat_;
         swing_foot_end_stance_pos_ = math::Vec3(foot_command_[0][0], foot_command_[0][1], foot_command_[0][2]);
@@ -1202,21 +1226,36 @@ private:
 
     void generate_ref_trajectory_()
     {
-        const int previewNL = preview_.NL();
-        // gather vrp reference window [walking_tick, walking_tick + previewNL)
-        std::vector<math::Vec3> vrp_ref(previewNL);
-        for (int l = 0; l < previewNL; ++l)
+        math::Vec3 com_stance_pos, com_stance_vel, com_stance_acc;
+        if (cfg_.com_generate_type != ComGenerateType::PREV)
         {
-            int idx = static_cast<int>(walking_tick_) + l;
+            // Ablation: read the phase-based CoM reference directly, no preview
+            // control. Same +1 tick lead as the yaw reference below.
+            int idx = static_cast<int>(walking_tick_) + 1;
             if (idx >= vrp_.NL()) idx = vrp_.NL() - 1;
-            vrp_ref[l] = vrp_.vrp_ref_firststance[idx];
+            com_stance_pos = vrp_.com_ref_firststance_heuristic[idx];
+            com_stance_vel = vrp_.com_refvel_firststance_heuristic[idx];
+            com_stance_acc = math::Vec3::Zero();
         }
-        Eigen::Matrix3f next = preview_.compute_target_state(vrp_ref);
-        preview_.update_state(next);
+        else
+        {
+            const int previewNL = preview_.NL();
+            // gather vrp reference window [walking_tick, walking_tick + previewNL)
+            std::vector<math::Vec3> vrp_ref(previewNL);
+            for (int l = 0; l < previewNL; ++l)
+            {
+                int idx = static_cast<int>(walking_tick_) + l;
+                if (idx >= vrp_.NL()) idx = vrp_.NL() - 1;
+                vrp_ref[l] = vrp_.vrp_ref_firststance[idx];
+            }
+            Eigen::Matrix3f next = preview_.compute_target_state(vrp_ref);
+            preview_.update_state(next);
 
-        const math::Vec3 com_stance_pos = next.row(0).transpose();
-        const math::Vec3 com_stance_vel = next.row(1).transpose();
-        const math::Vec3 com_stance_acc = next.row(2).transpose();
+            com_stance_pos = next.row(0).transpose();
+            com_stance_vel = next.row(1).transpose();
+            com_stance_acc = next.row(2).transpose();
+        }
+        target_com_stance_ = com_stance_pos;
 
         const math::Quat stance_yaw = math::yaw_quat(stance_foot_global_.quat);
         target_com_global_pos_ = math::combine_frame_transforms_pos(stance_foot_global_.pos, stance_yaw, com_stance_pos);
@@ -1433,7 +1472,8 @@ private:
     math::Quat swing_foot_end_stance_quat_ = math::Quat::Identity();
     FrameState stance_foot_start_global_;
 
-    // preview/com targets (global)
+    // preview/com targets
+    math::Vec3 target_com_stance_ = math::Vec3::Zero(); // stance frame (logging)
     math::Vec3 target_com_global_pos_ = math::Vec3::Zero();
     math::Vec3 target_com_global_vel_ = math::Vec3::Zero();
     math::Vec3 target_com_global_acc_ = math::Vec3::Zero();
