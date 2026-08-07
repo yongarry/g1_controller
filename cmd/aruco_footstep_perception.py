@@ -69,8 +69,7 @@ from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJ_DIR = os.path.dirname(_THIS_DIR)
 _WS_DIR = os.path.dirname(_PROJ_DIR)
-DEFAULT_DEPLOY = os.path.join(_PROJ_DIR, "config", "policy", "footstep", "v0",
-                              "params", "deploy.yaml")
+DEFAULT_DEPLOY = os.path.join(_PROJ_DIR, "config", "policy", "footstep", "deploy_base.yaml")
 DEFAULT_BOARD = os.path.join(_PROJ_DIR, "config", "aruco_board.json")
 SCENE_XML = os.path.join(_WS_DIR, "unitree_mujoco", "unitree_robots", "g1",
                          "scene_29dof_footstep.xml")  # sim source only
@@ -243,7 +242,18 @@ class RealsenseCamera:
         else:
             raise last_err
 
+        # Drop stale buffered frames: if detectMarkers is slower than the
+        # stream for a stretch, wait_for_frames would otherwise hand us a
+        # seconds-old image and the waist stamp would not match the scene.
+        try:
+            color_sensor = prof.get_device().first_color_sensor()
+            if color_sensor.supports(rs.option.frames_queue_size):
+                color_sensor.set_option(rs.option.frames_queue_size, 1)
+        except Exception as e:
+            print(f"[perception] could not set frames_queue_size=1 ({e})")
+
         self._configure_exposure(rs, prof, exposure_us, gain, f)
+        self._stream_fps = float(f)
 
         intr = prof.get_stream(rs.stream.color) \
                    .as_video_stream_profile().get_intrinsics()
@@ -388,6 +398,10 @@ class RealsenseCamera:
             return min(covering, key=lambda m: (m[0] * m[1], -m[2]))
         return max(pool, key=lambda m: (m[0] * m[1], m[2]))
 
+    @property
+    def stream_fps(self):
+        return self._stream_fps
+
     def read(self):
         """(bgr image, capture-time waist joints)."""
         frames = self.pipe.wait_for_frames()
@@ -396,7 +410,10 @@ class RealsenseCamera:
         # it is what makes the controller's camera->pelvis FK consistent with
         # the pose the head had when the markers were seen.
         waist = self.state.waist() if self.state is not None else None
-        img = np.asanyarray(frames.get_color_frame().get_data())
+        color = frames.get_color_frame()
+        if not color:
+            return None, waist
+        img = np.asanyarray(color.get_data())
         return img, waist
 
 
@@ -404,16 +421,47 @@ class RealsenseCamera:
 # Detector + PnP
 # ---------------------------------------------------------------------------
 class TargetEstimator:
+    # detectMarkers dominates CPU; below this width run full-res, above it
+    # detect at half scale then subpix-refine corners on the full gray image.
+    DETECT_DOWNSCALE_MIN_WIDTH = 800
+    DETECT_SCALE = 0.5
+
     def __init__(self, board, min_markers=2):
         d = board["dictionary"]
         self.dictionary = ac.make_dictionary(d["bits"], d["size"], d["seed"])
         self.obj_points = ac.board_object_points(board)
         self.detector = cv2.aruco.ArucoDetector(self.dictionary,
                                                 ac.detector_parameters())
+        # Half-res pass: no per-corner SUBPIX inside detectMarkers.
+        self.detector_fast = cv2.aruco.ArucoDetector(
+            self.dictionary, ac.detector_parameters(fast=True))
         self.min_markers = int(min_markers)
+        self._term = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
+                      20, 0.05)
+
+    def _detect(self, gray):
+        """Detect marker ids/corners in full-image coordinates."""
+        h, w = gray.shape[:2]
+        if w >= self.DETECT_DOWNSCALE_MIN_WIDTH:
+            scale = self.DETECT_SCALE
+            small = cv2.resize(gray, None, fx=scale, fy=scale,
+                               interpolation=cv2.INTER_AREA)
+            corners, ids, _ = self.detector_fast.detectMarkers(small)
+            if ids is None or len(ids) == 0:
+                return None, None
+            inv = 1.0 / scale
+            corners = [c * inv for c in corners]
+            # Subpixel on the full-res gray (detect was coarse / no refine).
+            flat = np.concatenate([c.reshape(-1, 2) for c in corners]).astype(
+                np.float32)
+            cv2.cornerSubPix(gray, flat, (5, 5), (-1, -1), self._term)
+            corners = [flat[i:i + 4].reshape(1, 4, 2)
+                       for i in range(0, len(flat), 4)]
+            return corners, ids
+        return self.detector.detectMarkers(gray)[:2]
 
     def estimate(self, gray, K, dist, vis=None):
-        corners, ids, _ = self.detector.detectMarkers(gray)
+        corners, ids = self._detect(gray)
         if ids is None or len(ids) == 0:
             return []
         ids = ids.ravel()
@@ -460,7 +508,9 @@ def main():
     p.add_argument("--domain", type=int, default=0, help="DDS domain id")
     p.add_argument("--source", default=None, choices=[None, "sim", "realsense"])
     p.add_argument("--show", action="store_true", help="debug window")
-    p.add_argument("--rate", type=float, default=15.0, help="publish rate [Hz]")
+    p.add_argument("--rate", type=float, default=0.0,
+                   help="max publish rate [Hz]; 0 = pace with the camera "
+                        "(recommended on the robot; old default 15 capped USB3)")
     p.add_argument("--exposure-us", type=float, default=None,
                    help="fixed color exposure [us]; 0 = auto "
                         "(overrides vision.camera.exposure_us)")
@@ -525,19 +575,38 @@ def main():
     pub = ChannelPublisher(topic, String_)
     pub.Init()
 
-    period = 1.0 / max(args.rate, 1e-3)
+    # 0 => no artificial sleep (wait_for_frames already paces realsense).
+    # Positive rate only caps CPU when the camera is faster than we need.
+    period = (1.0 / args.rate) if args.rate > 0.0 else 0.0
+    if period > 0.0:
+        print(f"[perception] publish capped at {args.rate:.1f} Hz")
+    else:
+        stream_fps = getattr(cam, "stream_fps", None)
+        if stream_fps:
+            print(f"[perception] publish paced by camera (~{stream_fps:.0f} Hz)")
+        else:
+            print("[perception] publish uncapped (camera/render paced)")
+
     n_pub = 0
     t_last_log = time.time()
     n_no_waist = 0
+    t_detect_ms = 0.0
+    gray = None
     while True:
         t0 = time.time()
         img, waist = cam.read()
+        if img is None:
+            continue
         t_cap = time.time()
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # Reuse the gray buffer when the stream size is stable.
+        if gray is None or gray.shape[:2] != img.shape[:2]:
+            gray = np.empty(img.shape[:2], dtype=np.uint8)
+        cv2.cvtColor(img, cv2.COLOR_BGR2GRAY, dst=gray)
         vis = img if args.show else None
 
         # raw camera-optical-frame poses (solvePnP output); the controller
         # does the camera -> pelvis -> stance-foot transforms itself.
+        t_det0 = time.time()
         targets = []
         for e in est.estimate(gray, cam.K, cam.dist, vis):
             if e["err"] > max_reproj:
@@ -550,6 +619,7 @@ def main():
                 "nmk": int(e["nmk"]),
                 "err": round(e["err"], 3),
             })
+        t_detect_ms += (time.time() - t_det0) * 1000.0
 
         payload = {"stamp": t_cap, "frame": "camera_optical",
                    "targets": targets}
@@ -569,15 +639,19 @@ def main():
         if time.time() - t_last_log > 2.0:
             ids = [t["id"] for t in targets]
             note = f", {n_no_waist} frames without waist" if n_no_waist else ""
+            avg_ms = t_detect_ms / max(n_pub, 1)
             print(f"[perception] {n_pub / (time.time() - t_last_log):5.1f} Hz, "
+                  f"detect {avg_ms:4.1f} ms/frame, "
                   f"targets in view: {ids}{note}")
             n_pub = 0
             n_no_waist = 0
+            t_detect_ms = 0.0
             t_last_log = time.time()
 
-        dt = time.time() - t0
-        if dt < period:
-            time.sleep(period - dt)
+        if period > 0.0:
+            dt = time.time() - t0
+            if dt < period:
+                time.sleep(period - dt)
 
 
 if __name__ == "__main__":

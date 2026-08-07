@@ -97,7 +97,7 @@ footstep:
   #                  seen, then walks the two nearest feasible targets.
   #   "goal"       - walk to the world-frame goal points listed under `goal:`
   #                  below, one after another (see that section).
-  command_source: csv_global # joystick | csv | csv_global | vision | goal
+  command_source: vision # joystick | csv | csv_global | vision | goal
   csv_path: config/footcommands.csv
   global_csv_path: config/footcommands_global.csv
 
@@ -222,9 +222,9 @@ footstep:
       # actually supports and falls back automatically (same resolution at a
       # lower fps first, e.g. 1280x720@10 - low fps is fine, the planner only
       # samples once per step). Set 640x480 here to prefer 30 fps on USB 2.
-      width: 1280         # 3cm markers need 720p to detect beyond ~1m
-      height: 720
-      fps: 30              # D435 on USB2 only supports 720p up to 15 fps; use USB3
+      width: 424         # 3cm markers need 720p to detect beyond ~1m
+      height: 240
+      fps: 60              # D435 on USB2 only supports 720p up to 15 fps; use USB3
       # Fixed color exposure [us] (realsense source only). Auto-exposure aims
       # for brightness, not sharpness: indoors it settles near 16 ms, and the
       # head motion of a walking step smears a 3 cm marker over several pixels

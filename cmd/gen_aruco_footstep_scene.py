@@ -17,7 +17,8 @@
 #   4. Printable per-target sheets (real world) -> <xml_dir>/aruco_markers/
 #      sheet_target_##.png at --dpi (markers at true physical scale).
 #   5. Single multi-page PDF (all targets) -> <xml_dir>/aruco_markers/
-#      footstep_aruco_sheets.pdf (two 2x2 marker layouts per A4 page, true scale).
+#      footstep_aruco_sheets.pdf: one target sheet per A4 page at true
+#      physical scale (large sheets may clip at the page edge).
 #
 # Marker ids: target i owns ids [4i, 4i+1, 4i+2, 4i+3]
 #   (front-left, front-right, back-right, back-left in the target frame;
@@ -212,15 +213,6 @@ def _draw_cut_guides(c, x0, y0, side_pts, mark_len=10, gap=3):
     c.line(x1, y1 + g, x1, y1 + g + m)
 
 
-def _draw_page_split_guide(c, x0, y_mid, sheet_pts):
-    """Dashed line between two stacked sheets on the same A4 page."""
-    c.setStrokeColorRGB(0.35, 0.35, 0.35)
-    c.setLineWidth(0.35)
-    c.setDash(4, 4)
-    c.line(x0 - 4 * mm, y_mid, x0 + sheet_pts + 4 * mm, y_mid)
-    c.setDash()
-
-
 def _draw_sheet_on_page(c, dictionary, target_index, row, x0, y0, sheet_pts,
                         marker_size, marker_spread, quiet_modules, bits, dpi):
     sheet = render_target_sheet(dictionary, target_index, row, marker_size,
@@ -234,41 +226,31 @@ def _draw_sheet_on_page(c, dictionary, target_index, row, x0, y0, sheet_pts,
 
 def write_print_pdf(dictionary, rows, pdf_path, marker_size, marker_spread,
                     quiet_modules, bits, dpi):
-    """Single PDF on A4: two targets per page (stacked), true physical scale."""
+    """One target sheet per A4 page at true physical scale (may clip)."""
     _, _, side = sheet_geometry(marker_size, marker_spread, quiet_modules, bits)
     sheet_pts = side * METER
     page_w, page_h = A4
     x0 = (page_w - sheet_pts) / 2.0
-    gap_pts = 3 * mm
-    slack = page_h - 2 * sheet_pts - gap_pts
-    y_bottom = max(10 * mm, slack / 2.0)
-    y_top = y_bottom + sheet_pts + gap_pts
+    y0 = (page_h - sheet_pts) / 2.0
+
+    if sheet_pts > min(page_w, page_h):
+        print(f"warning: sheet {side * 1000:.0f} mm exceeds A4; "
+              f"edges will clip when printed at 100% / Actual size")
+
+    print(f"[gen_aruco] print PDF: A4, 1 target/page, "
+          f"sheet {side * 1000:.0f} mm (100% / Actual size)")
 
     c = pdf_canvas.Canvas(pdf_path, pagesize=A4)
-    for page_start in range(0, len(rows), 2):
-        page_rows = rows[page_start:page_start + 2]
-        if len(page_rows) == 2:
-            positions = [(x0, y_bottom), (x0, y_top)]
-        else:
-            y_single = (page_h - sheet_pts) / 2.0
-            positions = [(x0, y_single)]
-
-        for j, r in enumerate(page_rows):
-            i = page_start + j
-            _draw_sheet_on_page(c, dictionary, i, r, positions[j][0], positions[j][1],
-                                sheet_pts, marker_size, marker_spread,
-                                quiet_modules, bits, dpi)
-
-        if len(page_rows) == 2:
-            y_mid = y_bottom + sheet_pts + gap_pts / 2.0
-            _draw_page_split_guide(c, x0, y_mid, sheet_pts)
-
+    for i, r in enumerate(rows):
+        _draw_sheet_on_page(c, dictionary, i, r, x0, y0, sheet_pts,
+                            marker_size, marker_spread,
+                            quiet_modules, bits, dpi)
         c.setFillColorRGB(0, 0, 0)
         c.setFont("Helvetica", 7)
         c.drawCentredString(
             page_w / 2.0, 6 * mm,
             f"A4: 100% / Actual size  |  sheet {side * 1000:.0f} mm  |  "
-            "cut along solid border (dashed line = page split)")
+            "cut along solid border (may clip if sheet > A4)")
         c.showPage()
     c.save()
 
@@ -280,7 +262,7 @@ if __name__ == "__main__":
     p.add_argument("--xml", default=DEFAULT_XML)
     p.add_argument("--board", default=DEFAULT_BOARD,
                    help="output board metadata JSON (read by the perception node)")
-    p.add_argument("--shape", choices=["box", "cylinder"], default="box")
+    p.add_argument("--shape", choices=["box", "cylinder"], default="cylinder")
     p.add_argument("--size", nargs="+", type=float, default=[0.125, 0.06],
                    metavar="H",
                    help="HX HY [HZ]: box half-extents [m] (cylinder: radius=HX). "
@@ -290,7 +272,7 @@ if __name__ == "__main__":
     p.add_argument("--platform-size", nargs=2, type=float,
                    default=list(DEFAULT_PLATFORM_SIZE), metavar=("HX", "HY"))
     p.add_argument("--platform-top", type=float, default=DEFAULT_PLATFORM_TOP)
-    p.add_argument("--offset-x", type=float, default=-0.03,
+    p.add_argument("--offset-x", type=float, default=-0.0,
                    help="stone/ArUco XY offset in each foot's yaw frame, forward [m] "
                         "(red/blue spheres stay on CSV)")
     p.add_argument("--offset-y", type=float, default=0.0,
@@ -299,9 +281,11 @@ if __name__ == "__main__":
                    help="stone/ArUco top height offset in world-up [m]")
     p.add_argument("--center", action="store_true")
     # marker parameters
-    p.add_argument("--marker-size", type=float, default=ac.DEFAULT_MARKER_SIZE,
-                   help="black-border side length [m] (default 0.03 = 3x3 cm)")
-    p.add_argument("--marker-spread", type=float, default=ac.DEFAULT_MARKER_SPREAD,
+    # p.add_argument("--marker-size", type=float, default=ac.DEFAULT_MARKER_SIZE,
+    p.add_argument("--marker-size", type=float, default=0.06,
+                   help="black-border side length [m] (default 0.06 = 6 cm; "
+                        "PDF is always 1 sheet per A4, large sheets may clip)")
+    p.add_argument("--marker-spread", type=float, default=0.05,
                    help="|x|=|y| offset of the 4 marker centers [m]")
     p.add_argument("--dict-bits", type=int, default=ac.DEFAULT_DICT_BITS,
                    help="marker bit-grid size (default 4 -> standard DICT_4X4; "

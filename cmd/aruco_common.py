@@ -86,12 +86,32 @@ def make_dictionary(bits=DEFAULT_DICT_BITS, size=DEFAULT_DICT_SIZE,
     return cv2.aruco.extendDictionary(size, bits, cv2.aruco.Dictionary(), seed)
 
 
-def detector_parameters(min_marker_perimeter_rate=0.04):
+def detector_parameters(min_marker_perimeter_rate=0.04, fast=False):
     """Shared detector tuning (subpixel corners; reject tiny blobs that a
-    small-dictionary decoder could hallucinate into valid ids)."""
+    small-dictionary decoder could hallucinate into valid ids).
+
+    fast=True: fewer adaptive-threshold scales and cheaper contour corner
+    refine - used for the half-res detect pass in the perception node.
+    Full-res passes keep SUBPIX for PnP accuracy.
+    """
     params = cv2.aruco.DetectorParameters()
-    params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
     params.minMarkerPerimeterRate = float(min_marker_perimeter_rate)
+    if fast:
+        # Default tries win sizes 3..23 step 10 (3 passes). One mid-size
+        # threshold is enough once the image is already downscaled.
+        params.adaptiveThreshWinSizeMin = 5
+        params.adaptiveThreshWinSizeMax = 15
+        params.adaptiveThreshWinSizeStep = 10
+        params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_NONE
+        params.minMarkerPerimeterRate = max(
+            float(min_marker_perimeter_rate), 0.05)
+    else:
+        params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        # Slightly fewer iterations than OpenCV defaults; quality loss is
+        # negligible for 3 cm markers and saves time on every hit.
+        params.cornerRefinementWinSize = 5
+        params.cornerRefinementMaxIterations = 20
+        params.cornerRefinementMinAccuracy = 0.05
     return params
 
 
