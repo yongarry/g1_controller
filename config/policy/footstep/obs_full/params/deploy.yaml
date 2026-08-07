@@ -1,0 +1,57 @@
+# Footstep deploy override (full observation set (ik target + foot_commands_3d_w_comz)).
+# Shared settings live in ../../deploy_base.yaml — edit that for common changes.
+extends: ../../deploy_base.yaml
+
+policy_file: 260806_1812_2d_lcp.onnx
+
+# The whole group uses history_length=10, skip_history_tick=2 (history-major).
+observations:
+  base_ang_vel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  use_gym_history: true
+  projected_gravity:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_pos_ordered_rel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_vel_ordered:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_ik_target:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  phase:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  foot_commands_3d_w_comz:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  last_processed_action:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2

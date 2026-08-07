@@ -1,0 +1,63 @@
+# Footstep deploy override (ablation: foot_commands_3d without com_z).
+# Shared settings live in ../../deploy_base.yaml — edit that for common changes.
+extends: ../../deploy_base.yaml
+
+# policy_file: 260728_1011_2d_lcp.onnx
+# policy_file: 260801_2338_2d.onnx
+# policy_file: 260803_2253_2d_hgain_rew.onnx
+
+# policy_file: 260729_0044_3d_lcp.onnx #<---------unstable
+policy_file: 260802_0625_3d.onnx
+
+
+# The whole group uses history_length=10, skip_history_tick=2 (history-major).
+observations:
+  base_ang_vel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  use_gym_history: true
+  projected_gravity:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_pos_ordered_rel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_vel_ordered:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_ik_target:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  phase:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  foot_commands_3d:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  last_processed_action:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2

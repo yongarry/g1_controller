@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # Copyright (c) 2025, DYROS.
 #
-# Like cmd/gen_footstep_scene.py, but each footstep target additionally gets
+# Like cmd/gen_footstep_scene.py, but each stepping stone additionally gets
 # FOUR ArUco markers (3x3-bit, "3 cm" class) on its top surface so an onboard
-# camera (D435i) can estimate the target pose precisely (16 corner points per
-# target -> robust PnP).
+# camera (D435i) can estimate the pose precisely (16 corner points per target
+# -> robust PnP). Stone XY uses yaw-frame --offset-*; red/blue spheres stay on
+# the raw CSV targets. ArUco geoms + board.json follow the stone landings.
 #
 # Outputs:
 #   1. Scene XML edits (same marked region as gen_footstep_scene.py for the
@@ -47,6 +48,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import aruco_common as ac
 from gen_footstep_scene import (
     read_targets, yaw_to_quat, build_footsteps, strip_start_platform, inject,
+    prepare_rows, stone_landing_poses,
     BEGIN_MARK, END_MARK, DEFAULT_CSV, DEFAULT_XML,
     DEFAULT_PLATFORM_SIZE, DEFAULT_PLATFORM_TOP, DEFAULT_BOARD,
 )
@@ -104,21 +106,23 @@ def build_marker_assets(n_markers, tex_rel_dir):
     return "\n".join(lines)
 
 
-def build_marker_geoms(rows, off, marker_size, marker_spread, tex_scale):
-    """Visual-only textured thin boxes on each footstep top face."""
-    ox, oy, oz = off
+def build_marker_geoms(stones, marker_size, marker_spread, tex_scale):
+    """Visual-only textured thin boxes on each stepping-stone top face.
+
+    `stones` from stone_landing_poses() (yaw-frame XY offset already applied).
+    """
     half = marker_size * tex_scale / 2.0  # geom includes the white quiet zone
     centers = ac.marker_centers(marker_spread)
     lines = []
-    for i, r in enumerate(rows):
-        x0, y0, z_top = r["x"] + ox, r["y"] + oy, r["z"] + oz
-        yaw = r["yaw"]
-        c, s = math.cos(yaw), math.sin(yaw)
+    for i, s in enumerate(stones):
+        x0, y0, z_top = s["sx"], s["sy"], s["sz"]
+        yaw = s["yaw"]
+        c, s_yaw = math.cos(yaw), math.sin(yaw)
         qw, qx, qy, qz = yaw_to_quat(yaw)
         for j, (mx, my) in enumerate(centers):
             mid = ac.MARKERS_PER_TARGET * i + j
-            gx = x0 + c * mx - s * my
-            gy = y0 + s * mx + c * my
+            gx = x0 + c * mx - s_yaw * my
+            gy = y0 + s_yaw * mx + c * my
             gz = z_top + MARKER_LIFT
             lines.append(
                 f'    <geom name="aruco_m{mid:03d}" type="box" '
@@ -286,9 +290,13 @@ if __name__ == "__main__":
     p.add_argument("--platform-size", nargs=2, type=float,
                    default=list(DEFAULT_PLATFORM_SIZE), metavar=("HX", "HY"))
     p.add_argument("--platform-top", type=float, default=DEFAULT_PLATFORM_TOP)
-    p.add_argument("--offset-x", type=float, default=-0.03)
-    p.add_argument("--offset-y", type=float, default=0.0)
-    p.add_argument("--offset-z", type=float, default=0.0)
+    p.add_argument("--offset-x", type=float, default=-0.03,
+                   help="stone/ArUco XY offset in each foot's yaw frame, forward [m] "
+                        "(red/blue spheres stay on CSV)")
+    p.add_argument("--offset-y", type=float, default=0.0,
+                   help="stone/ArUco XY offset in each foot's yaw frame, left [m]")
+    p.add_argument("--offset-z", type=float, default=0.0,
+                   help="stone/ArUco top height offset in world-up [m]")
     p.add_argument("--center", action="store_true")
     # marker parameters
     p.add_argument("--marker-size", type=float, default=ac.DEFAULT_MARKER_SIZE,
@@ -317,24 +325,23 @@ if __name__ == "__main__":
     dictionary = ac.make_dictionary(args.dict_bits, dict_size, args.dict_seed)
 
     off = (args.offset_x, args.offset_y, args.offset_z)
-    if args.center:
-        ys = [r["y"] for r in rows]
-        off = (off[0], off[1] - 0.5 * (min(ys) + max(ys)), off[2])
+    # Same recenter + yaw-frame stone poses as build_footsteps (spheres=CSV).
+    work = prepare_rows(rows, center_y=args.center)
+    stones = stone_landing_poses(work, off)
 
-    # 1) footstep pillar/platform/ground block (reuse gen_footstep_scene logic;
-    #    center_y handled above so both blocks share identical offsets)
+    # 1) footstep pillar/platform/ground + CSV spheres
     geom_block, z_ground, z_min = build_footsteps(
-        rows, args.shape, args.size, off, center_y=False,
+        rows, args.shape, args.size, off, center_y=args.center,
         plane_margin=args.plane_margin,
         platform_size=tuple(args.platform_size),
         platform_top=args.platform_top)
 
-    # 2) marker textures + geoms
+    # 2) ArUco textures + geoms on stone tops (offset landings)
     xml_dir = os.path.dirname(os.path.abspath(args.xml))
     tex_dir = os.path.join(xml_dir, "aruco_markers")
     tex_scale = write_marker_textures(dictionary, n_targets, tex_dir,
                                       args.quiet_modules, args.dict_bits)
-    marker_geoms = build_marker_geoms(rows, off, args.marker_size,
+    marker_geoms = build_marker_geoms(stones, args.marker_size,
                                       args.marker_spread, tex_scale)
     geom_block = geom_block.replace(f"\n    {END_MARK}",
                                     f"\n{marker_geoms}\n    {END_MARK}")
@@ -350,12 +357,11 @@ if __name__ == "__main__":
     with open(args.xml, "w") as f:
         f.write(xml_text)
 
-    # 4) board metadata (world pose = footstep top-surface center + yaw)
+    # 4) board metadata = stone top-surface center (where ArUco actually sit)
     targets_meta = [
-        {"index": i, "foot": r["foot"],
-         "world": {"x": r["x"] + off[0], "y": r["y"] + off[1],
-                   "z": r["z"] + off[2], "yaw": r["yaw"]}}
-        for i, r in enumerate(rows)
+        {"index": i, "foot": s["foot"],
+         "world": {"x": s["sx"], "y": s["sy"], "z": s["sz"], "yaw": s["yaw"]}}
+        for i, s in enumerate(stones)
     ]
     ac.save_board(args.board, targets_meta, args.dict_bits, dict_size,
                   args.dict_seed, args.marker_size, args.marker_spread,

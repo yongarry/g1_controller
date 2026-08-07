@@ -6,6 +6,10 @@
 #include <stdint.h>
 #include <chrono>
 #include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+#include <algorithm>
 #include <boost/program_options.hpp>
 #include <yaml-cpp/yaml.h>
 #include <filesystem>
@@ -113,6 +117,54 @@ inline std::filesystem::path parser_policy_dir(std::filesystem::path policy_dir)
     }
     spdlog::info("Policy directory: {}", policy_dir.string());
     return policy_dir;
+}
+
+/* ---------- YAML extends (deep merge, observations replace) ---------- */
+// Maps are deep-merged so an override can set e.g. footstep.com_generate_type
+// without copying the whole footstep block. Sequences and scalars replace.
+// `observations` is always replaced wholesale when present in the overlay, so
+// ablation files can drop terms by omitting them. The `extends` key is never
+// copied into the result. Relative extends paths are resolved against the file
+// that declared them.
+inline YAML::Node merge_yaml(const YAML::Node& base, const YAML::Node& overlay,
+                             bool replace_maps = false)
+{
+    if (!overlay || overlay.IsNull()) return YAML::Clone(base);
+    if (!base || base.IsNull() || replace_maps || !base.IsMap() || !overlay.IsMap()) {
+        return YAML::Clone(overlay);
+    }
+
+    YAML::Node out = YAML::Clone(base);
+    for (auto it = overlay.begin(); it != overlay.end(); ++it) {
+        const auto key = it->first.as<std::string>();
+        if (key == "extends") continue;
+        const bool replace_child = (key == "observations");
+        if (out[key] && out[key].IsMap() && it->second.IsMap() && !replace_child) {
+            out[key] = merge_yaml(out[key], it->second, false);
+        } else {
+            out[key] = YAML::Clone(it->second);
+        }
+    }
+    return out;
+}
+
+inline YAML::Node load_yaml_with_extends(const std::filesystem::path& path, int depth = 0)
+{
+    constexpr int kMaxExtendsDepth = 8;
+    if (depth > kMaxExtendsDepth) {
+        throw std::runtime_error("YAML extends chain too deep: " + path.string());
+    }
+    if (!std::filesystem::exists(path)) {
+        throw std::runtime_error("YAML file not found: " + path.string());
+    }
+
+    YAML::Node node = YAML::LoadFile(path.string());
+    if (!node["extends"]) return node;
+
+    const auto rel = node["extends"].as<std::string>();
+    const auto base_path = (path.parent_path() / rel).lexically_normal();
+    YAML::Node base = load_yaml_with_extends(base_path, depth + 1);
+    return merge_yaml(base, node);
 }
 
 /* ---------- Command Line Parameters ---------- */

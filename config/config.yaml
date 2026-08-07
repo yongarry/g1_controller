@@ -2,8 +2,11 @@ FSM:
   _: # enabled fsms
     Passive:
       id: 1
-    FixStand:
+    FixStand:          # LowCoM pose → Footstep
       id: 2
+    FixStand_MYS:      # higher stand pose → MindYourStep
+      id: 6
+      type: FixStand
     Velocity:
       id: 3
       type: RLBase
@@ -14,7 +17,7 @@ FSM:
       id: 5
       type: MindYourStep
 
-    Mimic_Dance_102: # uncomment to enable
+    Mimic_Dance_102: 
       id: 101
       type: Mimic
     Mimic_Gangnam_Style:
@@ -23,7 +26,8 @@ FSM:
 
   Passive:
     transitions: 
-      FixStand: LT + up.on_pressed
+      FixStand: LT + up.on_pressed        # LowCoM (-0.4)
+      FixStand_MYS: LT + left.on_pressed  # MindYourStep stand (-0.2)
     mode: [
       1,1,1,1,1,1,
       1,1,1,1,1,1,
@@ -38,11 +42,41 @@ FSM:
       3,3,3,3,3,3,3,  
       3,3,3,3,3,3,3,  
     ]
+  # LowCoM stand for Footstep policies.
   FixStand:
     transitions:
       Passive: LT + B.on_pressed
       Velocity: RB + X.on_pressed
       Footstep: RB + Y.on_pressed
+    kp: [
+      200., 100., 100., 350., 540., 40.,
+      200., 100., 100., 350., 540., 40.,
+      200,200,200,
+      40,40,40,40,40,40,40,
+      40,40,40,40,40,40,40,
+    ]
+    kd: [
+      2,2,2,4,2,2,
+      2,2,2,4,2,2,
+      5,5,5,
+      10,10,10,10,10,10,10,
+      10,10,10,10,10,10,10,
+    ]
+    ts: [0, 5]
+    qs: [
+      [],
+      [ -0.4, 0,0,0.9,-0.5,0,
+        -0.4, 0,0,0.9,-0.5,0,
+        0,0,0.2,
+        0.1, 0.2,0,1.1,0,0,0,
+        0.1,-0.2,0,1.1,0,0,0
+      ]
+    ]
+  # Higher stand for MindYourStep (G1_29DOF_custom).
+  FixStand_MYS:
+    transitions:
+      Passive: LT + B.on_pressed
+      Velocity: RB + X.on_pressed
       MindYourStep: RB + A.on_pressed
     kp: [
       200., 100., 100., 350., 540., 40.,
@@ -58,16 +92,12 @@ FSM:
       10,10,10,10,10,10,10,
       10,10,10,10,10,10,10,
     ]
-    ts: [0, 10]
+    ts: [0, 5]
     qs: [
       [],
-      # LowCoM (Footstep): [-0.4,0,0,0.9,-0.5,0, ...] + waist_pitch 0.2
-      # G1_29DOF_custom (MindYourStep):
-      # [ -0.2, 0,0,0.5,-0.3,0,
-        # -0.2, 0,0,0.5,-0.3,0,
-      [ -0.4, 0,0,0.9,-0.5,0,
-        -0.4, 0,0,0.9,-0.5,0,
-        0,0,0.2,
+      [ -0.2, 0,0,0.5,-0.3,0,
+        -0.2, 0,0,0.5,-0.3,0,
+        0,0,0,
         0.1, 0.2,0,1.1,0,0,0,
         0.1,-0.2,0,1.1,0,0,0
       ]
@@ -75,7 +105,6 @@ FSM:
   Velocity:
     transitions:
       Passive: LT + B.on_pressed
-      Footstep: RB + Y.on_pressed
       Mimic_Dance_102: LT(2s) + down.on_pressed
       Mimic_Gangnam_Style: LT(2s) + right.on_pressed
 
@@ -84,12 +113,14 @@ FSM:
   Footstep:
     transitions:
       Passive: LT + B.on_pressed
-      Velocity: RB + X.on_pressed
-    policy_dir: config/policy/footstep/v0
+    # policy_dir: config/policy/footstep/obs_full
+    policy_dir: config/policy/footstep/obs_wocomz
+    # policy_dir: config/policy/footstep/obs_woikdes
+    # policy_dir: config/policy/footstep/obs_wofcmd
+    # policy_dir: config/policy/footstep/obs_wocomz_heuri
   MindYourStep:
     transitions:
       Passive: LT + B.on_pressed
-      Velocity: RB + X.on_pressed
     policy_dir: config/policy/mindyourstep
   Mimic_Dance_102:
     transitions: 

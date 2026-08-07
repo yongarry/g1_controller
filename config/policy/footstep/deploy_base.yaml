@@ -1,17 +1,13 @@
-# Deploy configuration for the G1-2d footstep policy (G12DFootEnvCfg).
+# Shared deploy config for footstep policy ablations.
+# Ablation dirs override with:
+#   extends: ../../deploy_base.yaml
+#   footstep:                 # deep-merged into this file's footstep:
+#     com_generate_type: heuri
+#   observations: ...         # replaced wholesale (not deep-merged)
 #
-# The lower-body (12 leg joints, policy order == SDK 0..11) are driven by the
-# action manager. The upper body is held at default by State_Footstep.
+# Nested maps deep-merge; observations always replace. Keep per-ablation
+# observations in obs_*/params/deploy.yaml only.
 #
-# Regenerate with:
-#   isaaclab_dyros/scripts/rsl_rl/export_footstep_deploy.py
-
-# ONNX under <policy_dir>/exported/ (State_Footstep loads this by name).
-# policy_file: 260803_2253_2d.onnx
-# policy_file: 260723_1736.onnx
-# policy_file: policy.onnx
-# policy_file: 260728_1011_2d_lcp.onnx
-policy_file: 260803_2253_2d_hardrew.onnx
 
 # --- lower body (action manager) ---
 joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
@@ -20,9 +16,9 @@ stiffness: [100.0, 100.0, 100.0, 150.0, 40.0, 40.0,
             100.0, 100.0, 100.0, 150.0, 40.0, 40.0]
 damping: [2.0, 2.0, 2.0, 4.0, 2.0, 2.0,
           2.0, 2.0, 2.0, 4.0, 2.0, 2.0]
+
 # default_joint_pos: [-0.3, 0.0, 0.0, 0.7, -0.4, 0.0,
                     # -0.3, 0.0, 0.0, 0.7, -0.4, 0.0]
-
 default_joint_pos: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
                     -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
 
@@ -49,60 +45,6 @@ actions:
     offset: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
              -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
 
-# Observation order must match G12DFootEnvCfg.ObservationsCfg.PolicyCfg exactly.
-# The whole group uses history_length=10, skip_history_tick=2 (history-major).
-observations:
-  base_ang_vel:
-    params: {}
-    scale: null
-    clip: null
-    history_length: 10
-    skip_history_tick: 2
-  use_gym_history: true
-  projected_gravity:
-    params: {}
-    scale: null
-    clip: null
-    history_length: 10
-    skip_history_tick: 2
-  joint_pos_ordered_rel:
-    params: {}
-    scale: null
-    clip: null
-    history_length: 10
-    skip_history_tick: 2
-  joint_vel_ordered:
-    params: {}
-    scale: null
-    clip: null
-    history_length: 10
-    skip_history_tick: 2
-  joint_ik_target:
-    params: {}
-    scale: null
-    clip: null
-    history_length: 10
-    skip_history_tick: 2
-  phase:
-    params: {}
-    scale: null
-    clip: null
-    history_length: 10
-    skip_history_tick: 2
-  # foot_commands_2d:
-  foot_commands_3d:
-    params: {}
-    scale: null
-    clip: null
-    history_length: 10
-    skip_history_tick: 2
-  last_processed_action:
-    params: {}
-    scale: null
-    clip: null
-    history_length: 10
-    skip_history_tick: 2
-
 # --- footstep command generator (OnlineFootCommand) ---
 footstep:
   log_file: log/footstep_log.txt   # 상대경로는 proj_dir 기준, ""로 두면 비활성화
@@ -114,20 +56,12 @@ footstep:
   # pelv_com_offset: 0.0761
   vrp_height: 0.6258
   pelv_com_offset: 0.0678
-  # vrp_height: 0.6457
-  # pelv_com_offset: 0.0724
   vrp_horizon_length: 4.0
   preview_horizon_length: 1.6
-  # CoM reference generator - MUST match the com_generate_type the policy above
-  # was trained with (foot_env_cfg.py: G13DFootEnvCfg -> prev,
-  # G13DFootEnvCfg_heuri1 -> heuri, G13DFootEnvCfg_heuri2 -> heuri2).
+  # CoM reference generator
   #   prev   - preview control on the VRP reference (default)
-  #   heuri  - phase-based CoM: hold at the double-support midpoint during DSP,
-  #            cubic to the next midpoint during SSP
-  #   heuri2 - phase-based CoM that keeps moving through every phase and sways
-  #            toward the stance foot
-  # The heuristic types bypass the preview controller, so preview_horizon_length
-  # is unused with them.
+  #   heuri  - phase-based CoM: hold at the double-support midpoint during DSP, cubic to the next midpoint during SSP
+  #   heuri2 - phase-based CoM that keeps moving through every phase and sways toward the stance foot
   com_generate_type: prev
   swing_up_timing: 0.2
   swing_down_timing: 0.6
@@ -146,8 +80,9 @@ footstep:
 
   # Foot world-position source (logging & global-plan stance tracking):
   #   fk_odometry - FK landing accumulation (default, hardware)
-  #   sim_odom    - MuJoCo ground truth: rt/odommodestate base + FK foot offset
-  foot_state_source: fk_odometry  # fk_odometry | sim_odom
+  #   sim_odom    - MuJoCo: rt/odommodestate base + FK foot offset
+  #   mujoco      - MuJoCo: ankle-roll body xpos/yaw (odom.foot_position_body)
+  foot_state_source: sim_odom  # fk_odometry | sim_odom | mujoco
   sim_odom_topic: rt/odommodestate
 
   # Foot-command source:
@@ -162,22 +97,21 @@ footstep:
   #                  seen, then walks the two nearest feasible targets.
   #   "goal"       - walk to the world-frame goal points listed under `goal:`
   #                  below, one after another (see that section).
-  command_source: goal # joystick | csv | csv_global | vision | goal
-  # Local per-step commands (command_source == csv), relative to the project dir.
+  command_source: csv_global # joystick | csv | csv_global | vision | goal
   csv_path: config/footcommands.csv
-  # Absolute world-frame targets (command_source == csv_global), relative to the
-  # project dir. Generate from a local csv with cmd/convert_footcommand_2_global.py.
   global_csv_path: config/footcommands_global.csv
+
   # World pose [x, y, z, yaw] of each foot at spawn. The initial stance foot (the
   # one NOT swinging first) anchors the world frame of the csv_global plan, so
   # these MUST match the frame footcommands_global.csv was authored in (same
   # values as the convert script's --init-*foot). Taken from the G1 footstep
-  # scene keyframe. Ignored when foot_state_source is sim_odom, which measures
-  # the spawn pose directly, and unused by command_source: goal, which anchors
-  # on the robot's own stance at walk start.
-  # global_init_lfoot: [-0.02179,  0.118506, 0.0, 0.0]
-  global_init_lfoot: [-0.0,  0.1185, 0.0, 0.0]
-  global_init_rfoot: [-0.0, -0.1185, 0.0, 0.0]
+  # scene keyframe. Ignored when foot_state_source is sim_odom/mujoco, which
+  # measure the spawn pose directly, and unused by command_source: goal, which
+  # anchors on the robot's own stance at walk start.
+  global_init_lfoot: [-0.02179,  0.118506, 0.0, 0.0]
+  global_init_rfoot: [-0.02179,  -0.118506, 0.0, 0.0]
+  # global_init_lfoot: [-0.0,  0.1185, 0.0, 0.0]
+  # global_init_rfoot: [-0.0, -0.1185, 0.0, 0.0]
   ranges:
     foot_pos_x: [-0.2, 0.2]
     foot_pos_y: [0.2, 0.4]
@@ -232,43 +166,31 @@ footstep:
   # Visualize these points in MuJoCo with:
   #   python3 cmd/gen_goals.py
   goal:
-    # [x, y, yaw, com_z] - com_z was trained over (-0.1, 0.05) for this policy
-    # (G13DFootFlatEnvCfg.commands.foot_commands.ranges.com_z); staying inside
-    # that band keeps the CoM height in distribution.
+    # [x, y, yaw, com_z]
     points:
-      - [1, -1.0, 0.0, -0.1]     # walk here crouched
-      - [2, 1, 1.5708, 0.0]    # then walk here standing taller
-      - [3, 0, 0.0, 0.0]    # then walk here standing taller
-    step_x_max: 0.2      # [m] nominal (max) forward step
-    step_y: 0.2        # [m] nominal lateral step width
-    step_yaw_max: 0.2    # [rad] nominal (max) per-step turn
-    ssp_t: 0.7           # [s] single support time
-    dsp_t: 0.15          # [s] double support time
-    height: 0.08         # [m] swing apex height
+      - [1.5, -1.5, 0.0, -0.2]
+      - [3.0,  1.5, 1.57, 0.1] 
+      - [4.5,  0, 0.0, 0.0]    
+    step_x_max: 0.2       # [m] nominal (max) forward step
+    step_y: 0.2           # [m] nominal lateral step width
+    step_yaw_max: 0.2     # [rad] nominal (max) per-step turn
+    ssp_t: 0.7            # [s] single support time
+    dsp_t: 0.15           # [s] double support time
+    height: 0.08          # [m] swing apex height
     reach_radius: 0.05    # [m] a goal this close counts as reached
-    reach_yaw: 0.1       # [rad] heading tolerance (goals that specify a yaw)
-    align_radius: 1.0    # [m] start blending into the goal heading here
-    # Largest com_z change per footstep. The commanded height is rate-limited
-    # toward the active goal's com_z instead of jumping to it, which would ask
-    # the preview controller for the whole change inside one dsp_t (0.15 s).
-    # At 0.02 a 0.1 m crouch is reached over 5 steps. 0 applies it immediately.
-    com_z_rate: 0.02
+    reach_yaw: 0.1        # [rad] heading tolerance (goals that specify a yaw)
+    align_radius: 1.0     # [m] start blending into the goal heading here
+    com_z_rate: 0.02      # Largest com_z change per footstep. The commanded height is rate-limited
 
     # What the robot does while stopped at each goal.
     stop:
       move_time: 1.5     # [s] upper-body interpolation time
       hold_time: 2.0     # [s] extra pause after the motion before walking on
-      # One pose per goal, same layout as upper_body.default_joint_pos above
-      # (17 targets, SDK 12..28: waist yaw/roll/pitch, then the left arm
-      # shoulder p/r/y, elbow, wrist r/p/y, then the right arm). A goal with no
-      # entry here keeps whatever pose the robot is already holding.
       upper_body_pose:
-        # goal 1: both arms raised forward
         - [0.0, 0.0, 0.2,
            0.77, 0.25, 0.0, -0.8, -1.57, 0.0, 0.0,
            0.77, -0.25, 0.0, -0.8,  1.57, 0.0, 0.0]
-        # goal 2: back to the default carry pose
-        - [0.0, 0.0, 0.,
+        - [0.0, 0.0, 0.1,
            0.0, 0.5, 0.2, 0.0, 0.0, 0.0, 0.0,
            0.0, -0.5, -0.2, 0.0, 0.0, 0.0, 0.0]
         - [0.0, 0.0, 0.2,

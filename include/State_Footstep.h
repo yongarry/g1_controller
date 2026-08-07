@@ -92,8 +92,9 @@ private:
     // until it flips, then resets the planner and starts walking.
     std::atomic<bool> walk_started_{false};
 
-    // sim_odom: MuJoCo ground-truth base position from rt/odommodestate
-    bool use_sim_odom_ = false;
+    // sim_odom / mujoco: subscribe to rt/odommodestate
+    bool use_sim_odom_ = false;   // base pos + FK foot
+    bool use_mujoco_foot_ = false; // ankle-roll body xpos/yaw
     std::shared_ptr<unitree::robot::go2::subscription::SportModeState> odom_sub_;
 
     // --- data logging (mirrors the tocabi cc.cpp writeFile columns) ----------

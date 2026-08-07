@@ -162,7 +162,7 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     deploy_path = args.deploy or os.path.join(
-        resolve_policy_dir(args.config), "params", "deploy.yaml"
+        resolve_policy_dir(args.config), "..", "deploy_base.yaml"
     )
     points, reach_radius = read_goals(deploy_path)
 

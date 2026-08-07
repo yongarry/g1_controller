@@ -6,8 +6,13 @@
 # planned footholds can be visualized / stepped on in simulation.
 #
 # Each foothold is a vertical box (default) or cylinder from the ground plane up
-# to pos_z. Boxes show yaw-aligned rectangular footprints; cylinders are round
-# pillars (yaw is ignored visually).
+# to the stone top. Boxes show yaw-aligned rectangular footprints; cylinders are
+# round pillars (yaw is ignored visually).
+#
+# Offsets (--offset-x/y/z) apply only to stepping stones:
+#   stone XY = CSV target + R(yaw)*(ox, oy)   # foot yaw frame: +x fwd, +y left
+#   stone Z  = CSV pos_z + oz                 # world-up
+# Collision-free spheres stay on the raw CSV targets (L=red, R=blue).
 #
 # The geoms are written into a marked region of the XML and the script is
 # idempotent: re-running strips every prior auto-generated region (footstep /
@@ -61,7 +66,7 @@ ALL_GENERATED_REGIONS = [
 
 DEFAULT_BOARD = os.path.join(_PROJ_DIR, "config", "aruco_board.json")
 
-# rgba per swing foot (alpha < 1 so overlaps are visible)
+# rgba per swing foot (stepping stones)
 # COLOR_R = "0.80 0.30 0.30 1"  # right foot
 # COLOR_L = "0.30 0.45 0.80 1"  # left foot
 
@@ -70,9 +75,12 @@ COLOR_R = "0.3 0.3 0.3 1"  # right foot
 COLOR_L = COLOR_R  # left foot
 COLOR_GROUND = "0.7 0.6 0.5 1"
 COLOR_PLATFORM = COLOR_R
+COLOR_TARGET_L = "0.9 0.15 0.15 1"   # left foot target: red
+COLOR_TARGET_R = "0.15 0.35 0.95 1"  # right foot target: blue
 DEFAULT_PLATFORM_SIZE = (0.12, 0.17)
 DEFAULT_PLATFORM_TOP = 0.0
 DEFAULT_PLATFORM_HALF_HEIGHT = 0.5  # when min(pos_z) >= platform_top
+DEFAULT_MARKER_RADIUS = 0.025
 
 def read_targets(path):
     with open(path, newline="") as f:
@@ -104,13 +112,50 @@ def yaw_to_quat(yaw):
     return (math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0))
 
 
+def yaw_frame_offset(x, y, yaw, ox, oy):
+    """Translate (x, y) by (ox, oy) in the foot yaw frame (+x fwd, +y left)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    return x + c * ox - s * oy, y + s * ox + c * oy
+
+
+def prepare_rows(rows, center_y=False):
+    """Copy rows; optionally recenter world-y so the path straddles y=0."""
+    work = [dict(r) for r in rows]
+    if center_y:
+        ys = [r["y"] for r in work]
+        dy = -0.5 * (min(ys) + max(ys))
+        for r in work:
+            r["y"] += dy
+    return work
+
+
+def stone_landing_poses(rows, off):
+    """Stepping-stone landings: XY in each foot's yaw frame, Z world-up.
+
+    Returns list of dicts: sx, sy, sz, yaw, foot (CSV x/y/z untouched).
+    """
+    ox, oy, oz = off
+    out = []
+    for r in rows:
+        sx, sy = yaw_frame_offset(r["x"], r["y"], r["yaw"], ox, oy)
+        out.append({
+            "sx": sx, "sy": sy, "sz": r["z"] + oz,
+            "yaw": r["yaw"], "foot": r["foot"],
+        })
+    return out
+
+
 def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
-                    platform_size, platform_top):
-    """Build spawn platform, ground plane at min(pos_z), and stepping geoms.
+                    platform_size, platform_top, marker_radius=DEFAULT_MARKER_RADIUS):
+    """Build spawn platform, ground plane, stepping geoms, and target spheres.
 
     size_xy: (HX, HY) or (HX, HY, HZ). HX/HY are horizontal half-extents [m]
     (cylinder uses HX as radius). If HZ is given, it is the vertical half-size
-    and the geom top face stays at pos_z; otherwise height is pos_z - ground.
+    and the geom top face stays at the stone top; otherwise height is
+    stone_top - ground.
+
+    Stones use yaw-frame XY offset from `off`; spheres stay on CSV targets.
+    If center_y, both are recentered in world y first (same lateral shift).
     """
     if len(size_xy) == 3:
         sx, sy, fixed_hz = size_xy
@@ -121,14 +166,10 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
         raise ValueError(f"size must be HX HY [HZ], got {len(size_xy)} values")
     radius = sx
     plat_hx, plat_hy = platform_size
-    ox, oy, oz = off
-    if center_y:
-        ys = [r["y"] for r in rows]
-        oy += -0.5 * (min(ys) + max(ys))  # straddle y=0
 
-    xs = [r["x"] + ox for r in rows]
-    ys = [r["y"] + oy for r in rows]
-    zs_top = [r["z"] + oz for r in rows]
+    work = prepare_rows(rows, center_y)
+    stones = stone_landing_poses(work, off)
+    zs_top = [s["sz"] for s in stones]
     z_min = min(zs_top)
 
     if z_min >= platform_top:
@@ -140,6 +181,8 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
         plat_hz = (platform_top - z_min) * 0.5
         plat_zc = z_min + plat_hz
 
+    xs = [s["sx"] for s in stones]
+    ys = [s["sy"] for s in stones]
     plane_cx = 0.5 * (min(xs) + max(xs))
     plane_cy = 0.5 * (min(ys) + max(ys))
     plane_hx = 0.5 * (max(xs) - min(xs)) + plane_margin
@@ -156,21 +199,19 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
         f'rgba="{COLOR_GROUND}" material="MatPlane2" group="2"/>',
     ]
 
-    for i, r in enumerate(rows):
-        x = r["x"] + ox
-        y = r["y"] + oy
-        z_top = r["z"] + oz
+    for i, s in enumerate(stones):
+        x, y, z_top = s["sx"], s["sy"], s["sz"]
         if fixed_hz is not None:
             hz = fixed_hz
-            zc = z_top - hz  # top face at pos_z
+            zc = z_top - hz  # top face at stone top
         else:
             height = z_top - z_ground
             if height < 1e-4:
                 continue  # foothold sits on the ground plane; no pillar needed
             hz = height * 0.5
             zc = z_ground + hz
-        qw, qx, qy, qz = yaw_to_quat(r["yaw"])
-        color = COLOR_R if r["foot"] == "R" else COLOR_L
+        qw, qx, qy, qz = yaw_to_quat(s["yaw"])
+        color = COLOR_R if s["foot"] == "R" else COLOR_L
         if shape == "cylinder":
             lines.append(
                 f'    <geom name="footstep_cyl_{i:02d}" type="cylinder" '
@@ -186,6 +227,18 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
                 f'quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" '
                 f'rgba="{color}"/>'
             )
+
+    # Spheres at CSV targets (after optional center_y; no stone offset)
+    rad = marker_radius
+    for i, r in enumerate(work):
+        x, y, z = r["x"], r["y"], r["z"] + rad
+        color = COLOR_TARGET_L if r["foot"] == "L" else COLOR_TARGET_R
+        lines.append(
+            f'    <geom name="target_{r["foot"]}_{i:02d}" type="sphere" group="5" '
+            f'size="{rad:.4f}" pos="{x:.4f} {y:.4f} {z:.4f}" '
+            f'rgba="{color}" contype="0" conaffinity="0"/>'
+        )
+
     return f"    {BEGIN_MARK}\n" + "\n".join(lines) + f"\n    {END_MARK}", z_ground, z_min
 
 
@@ -252,7 +305,8 @@ if __name__ == "__main__":
     p.add_argument("--xml", default=DEFAULT_XML, help="MuJoCo scene XML to edit")
     p.add_argument("--shape", choices=["box", "cylinder"], default="box",
                    help="box: yaw-aligned rectangle (default); cylinder: round pillar")
-    p.add_argument("--size", nargs="+", type=float, default=[0.1, 10.06],
+    # p.add_argument("--size", nargs="+", type=float, default=[0.1, 10.06],
+    p.add_argument("--size", nargs="+", type=float, default=[0.1, 0.1, 0.1],
                    metavar="H",
                    help="HX HY [HZ]: box half-extents [m] (cylinder: radius=HX, HY ignored). "
                         "If HZ given, vertical half-size is fixed (top at pos_z); "
@@ -264,9 +318,15 @@ if __name__ == "__main__":
                    help="spawn platform horizontal half-extents [m]")
     p.add_argument("--platform-top", type=float, default=DEFAULT_PLATFORM_TOP,
                    help="spawn platform top face height [m] (default: z=0)")
-    p.add_argument("--offset-x", type=float, default=-0.03)
-    p.add_argument("--offset-y", type=float, default=0.0)
-    p.add_argument("--offset-z", type=float, default=0.0)
+    p.add_argument("--offset-x", type=float, default=-0.03,
+                   help="stone XY offset in each foot's yaw frame, forward [m] "
+                        "(spheres stay on CSV)")
+    p.add_argument("--offset-y", type=float, default=0.0,
+                   help="stone XY offset in each foot's yaw frame, left [m]")
+    p.add_argument("--offset-z", type=float, default=0.0,
+                   help="stone top height offset in world-up [m]")
+    p.add_argument("--marker-radius", type=float, default=DEFAULT_MARKER_RADIUS,
+                   help="foot-target sphere radius [m] (left red, right blue)")
     p.add_argument("--center", action="store_true",
                    help="re-center the lateral (y) span on y=0 (off by default; the "
                         "CSV is already in the real world frame)")
@@ -280,7 +340,8 @@ if __name__ == "__main__":
                             center_y=args.center,
                             plane_margin=args.plane_margin,
                             platform_size=tuple(args.platform_size),
-                            platform_top=args.platform_top)
+                            platform_top=args.platform_top,
+                            marker_radius=args.marker_radius)
 
     with open(args.xml) as f:
         xml_text = f.read()
@@ -295,4 +356,5 @@ if __name__ == "__main__":
         else f"z_ground={z_ground:.4f}"
     )
     print(f"Wrote start_platform + ground plane + {len(rows)} {args.shape} "
-          f"footstep targets into {args.xml} ({ground_note})")
+          f"footsteps + {len(rows)} target markers "
+          f"(L=red, R=blue) into {args.xml} ({ground_note})")

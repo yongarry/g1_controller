@@ -113,7 +113,7 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     auto cfg = param::config["FSM"][state_string];
     auto policy_dir = param::parser_policy_dir(cfg["policy_dir"].as<std::string>());
 
-    YAML::Node deploy = YAML::LoadFile((policy_dir / "params" / "deploy.yaml").string());
+    YAML::Node deploy = param::load_yaml_with_extends(policy_dir / "params" / "deploy.yaml");
     YAML::Node fs = deploy["footstep"];
     if (!fs) throw std::runtime_error("State_Footstep: deploy.yaml missing 'footstep' section.");
 
@@ -189,20 +189,22 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
 
     // ---- foot world-position source ----
     // fk_odometry: FK landing accumulation (default, hardware)
-    // sim_odom:    MuJoCo rt/odommodestate base truth + FK foot offset
+    // sim_odom:    MuJoCo rt/odommodestate base + FK foot offset
+    // mujoco:      MuJoCo ankle-roll body xpos/yaw via odom.foot_position_body
     {
         std::string foot_src = fs["foot_state_source"] ? fs["foot_state_source"].as<std::string>()
                                                        : std::string("fk_odometry");
         std::transform(foot_src.begin(), foot_src.end(), foot_src.begin(),
                        [](unsigned char c){ return std::tolower(c); });
         use_sim_odom_ = (foot_src == "sim_odom");
-        if (use_sim_odom_)
+        use_mujoco_foot_ = (foot_src == "mujoco");
+        if (use_sim_odom_ || use_mujoco_foot_)
         {
             std::string topic = fs["sim_odom_topic"] ? fs["sim_odom_topic"].as<std::string>()
                                                      : std::string("rt/odommodestate");
             odom_sub_ = std::make_shared<unitree::robot::go2::subscription::SportModeState>(topic);
             odom_sub_->wait_for_connection();
-            spdlog::info("[Footstep] foot_state_source = sim_odom (topic={})", topic);
+            spdlog::info("[Footstep] foot_state_source = {} (topic={})", foot_src, topic);
         }
         else
         {
@@ -372,8 +374,12 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         command_->set_input(command_source_->input());
     }
 
-    command_->set_foot_state_source(use_sim_odom_ ? isaaclab::FootStateSource::SIM_ODOM
-                                                  : isaaclab::FootStateSource::FK_ODOMETRY);
+    if (use_mujoco_foot_)
+        command_->set_foot_state_source(isaaclab::FootStateSource::MUJOCO);
+    else if (use_sim_odom_)
+        command_->set_foot_state_source(isaaclab::FootStateSource::SIM_ODOM);
+    else
+        command_->set_foot_state_source(isaaclab::FootStateSource::FK_ODOMETRY);
 
     // ---- env (policy + managers) ----
     auto articulation = std::make_shared<unitree::BaseArticulation<LowState_t::SharedPtr>>(FSMState::lowstate);
@@ -606,10 +612,24 @@ void State_Footstep::enter()
         Eigen::VectorXf q(29), qd(29);
 
         auto update_base_from_odom = [&]() {
-            if (!use_sim_odom_ || !odom_sub_) return;
+            if (!odom_sub_) return;
             std::lock_guard<std::mutex> lock(odom_sub_->mutex_);
-            const auto& p = odom_sub_->msg_.position();
-            command_->set_base_pos_world(isaaclab::math::Vec3(p[0], p[1], p[2]));
+            if (use_sim_odom_)
+            {
+                const auto& p = odom_sub_->msg_.position();
+                command_->set_base_pos_world(isaaclab::math::Vec3(p[0], p[1], p[2]));
+            }
+            if (use_mujoco_foot_)
+            {
+                // Layout from unitree_sdk2_bridge: [Lxyz, Rxyz, Lyaw, Ryaw]
+                const auto& fp = odom_sub_->msg_.foot_position_body();
+                command_->set_mujoco_foot_pose(
+                    isaaclab::Kinematics::LEFT,
+                    isaaclab::WorldPose{fp[0], fp[1], fp[2], fp[6]});
+                command_->set_mujoco_foot_pose(
+                    isaaclab::Kinematics::RIGHT,
+                    isaaclab::WorldPose{fp[3], fp[4], fp[5], fp[7]});
+            }
         };
 
         // vision mode: take the latest perception frame (camera optical

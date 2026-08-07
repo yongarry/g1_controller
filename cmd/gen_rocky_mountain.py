@@ -25,11 +25,12 @@
 #                            tops fade over --flush-blend to `clearance` below
 #                            the interpolated footstep surface so the filler
 #                            terrain never obstructs the swing foot.
-#   4. stone_XX            - stepping stones, top face exactly at each target
-#                            pos_z (these are what the robot lands on). Boxes are
-#                            yaw-aligned; --stone-shape cylinder ignores yaw.
-#   5. target_L_XX/R_XX    - small collision-free spheres marking each foot
-#                            target: LEFT = red, RIGHT = blue
+#   4. stone_XX            - stepping stones the robot lands on. Their XY is the
+#                            CSV target shifted by --offset-x/y in that foot's
+#                            yaw frame (forward=x, left=y); Z uses --offset-z in
+#                            world up. Boxes are yaw-aligned; cylinders ignore yaw.
+#   5. target_L_XX/R_XX    - collision-free spheres at the raw CSV target
+#                            (no offset): LEFT = red, RIGHT = blue
 #
 # The terrain only fills a corridor around the footstep path (distance-to-path
 # falloff), so it reads as a mountain ridge rather than a filled field.
@@ -127,6 +128,32 @@ def read_targets(path):
 
 def yaw_to_quat(yaw):
     return (math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0))
+
+
+def yaw_frame_offset(x, y, yaw, ox, oy):
+    """Translate (x, y) by (ox, oy) expressed in the foot yaw frame.
+
+    Foot frame: +x forward along yaw, +y left. World = R(yaw) * local.
+    """
+    c, s = math.cos(yaw), math.sin(yaw)
+    return x + c * ox - s * oy, y + s * ox + c * oy
+
+
+def stone_landing_poses(rows, off):
+    """Stepping-stone landings: XY offset in each foot's yaw frame, Z world-up.
+
+    Returns list of dicts with keys sx, sy, sz, yaw, foot (CSV x/y/z untouched).
+    """
+    ox, oy, oz = off
+    out = []
+    for r in rows:
+        sx, sy = yaw_frame_offset(r["x"], r["y"], r["yaw"], ox, oy)
+        out.append({
+            "sx": sx, "sy": sy, "sz": r["z"] + oz,
+            "yaw": r["yaw"], "foot": r["foot"],
+        })
+    return out
+
 
 
 # ---------------------------------------------------------------------------
@@ -254,17 +281,17 @@ def required_overlap(shape, layout):
 # terrain generation
 # ---------------------------------------------------------------------------
 
-def build_rock_cells(rows, off, args, z_ground):
+def build_rock_cells(stones, args, z_ground):
     """Lattice of columns approximating a rocky mountain under the footsteps.
 
+    `stones` is from stone_landing_poses() (yaw-frame XY offset already applied).
     Columns are boxes or cylinders (args.rock_shape) on a square or triangular
     lattice (args.layout). Returns a list of XML geom lines.
     """
-    ox, oy, oz = off
-    # surface control points: footsteps + a virtual start point so the terrain
-    # descends smoothly onto the spawn platform
-    stones = [(r["x"] + ox, r["y"] + oy, r["z"] + oz) for r in rows]
-    points = [(0.0, 0.0, args.platform_top)] + stones
+    # surface control points: stone landings + a virtual start point so the
+    # terrain descends smoothly onto the spawn platform
+    stone_xyz = [(s["sx"], s["sy"], s["sz"]) for s in stones]
+    points = [(0.0, 0.0, args.platform_top)] + stone_xyz
     path = [(p[0], p[1]) for p in points]
 
     xs = [p[0] for p in points]
@@ -317,13 +344,13 @@ def build_rock_cells(rows, off, args, z_ground):
         # the stone's own top face
         r0 = args.flush_radius
         r1 = r0 + args.flush_blend
-        z_in = [z for (sx_, sy_, z) in stones
+        z_in = [z for (sx_, sy_, z) in stone_xyz
                 if (cx - sx_) ** 2 + (cy - sy_) ** 2 <= r0 * r0]
         if z_in:
             top = min(z_in) - args.flush_drop
         else:
             ds_min, z_near = min(
-                (math.hypot(cx - sx_, cy - sy_), z) for (sx_, sy_, z) in stones)
+                (math.hypot(cx - sx_, cy - sy_), z) for (sx_, sy_, z) in stone_xyz)
             if ds_min < r1:
                 # cosine blend from flush height back to the far-field surface
                 t = 0.5 * (1.0 - math.cos(math.pi * (ds_min - r0) / args.flush_blend))
@@ -369,8 +396,9 @@ def build_rock_cells(rows, off, args, z_ground):
 # ---------------------------------------------------------------------------
 
 def build_scene(rows, off, args):
-    ox, oy, oz = off
-    zs_top = [r["z"] + oz for r in rows]
+    # Stones/rocks use yaw-frame XY offset; markers stay on raw CSV targets.
+    stones = stone_landing_poses(rows, off)
+    zs_top = [s["sz"] for s in stones]
     z_min = min(zs_top)
     platform_top = args.platform_top
 
@@ -383,8 +411,8 @@ def build_scene(rows, off, args):
         plat_hz = (platform_top - z_min) * 0.5
         plat_zc = z_min + plat_hz
 
-    xs = [r["x"] + ox for r in rows]
-    ys = [r["y"] + oy for r in rows]
+    xs = [s["sx"] for s in stones]
+    ys = [s["sy"] for s in stones]
     plane_cx = 0.5 * (min(xs) + max(xs))
     plane_cy = 0.5 * (min(ys) + max(ys))
     plane_hx = 0.5 * (max(xs) - min(xs)) + args.plane_margin
@@ -403,19 +431,17 @@ def build_scene(rows, off, args):
         f'rgba="{COLOR_GROUND}" material="MatPlane2" group="2"/>',
     ]
 
-    # 1) mountain body
-    rock_lines = build_rock_cells(rows, off, args, z_ground)
+    # 1) mountain body (follows stone landings, not raw CSV markers)
+    rock_lines = build_rock_cells(stones, args, z_ground)
     lines += rock_lines
 
-    # 2) stepping stones (what the robot actually lands on), tops at pos_z
-    sx, sy = args.stone_size
+    # 2) stepping stones (yaw-frame XY offset from CSV target)
+    hx, hy = args.stone_size
     z_lo = min(zs_top + [platform_top])
     z_span = max(max(zs_top) - z_lo, 1e-6)
     n_stones = 0
-    for i, r in enumerate(rows):
-        x = r["x"] + ox
-        y = r["y"] + oy
-        z_top = r["z"] + oz
+    for i, s in enumerate(stones):
+        x, y, z_top = s["sx"], s["sy"], s["sz"]
         height = z_top - z_ground
         if height < 1e-4:
             continue  # sits on the ground plane; no pillar needed
@@ -428,24 +454,22 @@ def build_scene(rows, off, args):
             # round pillar: HX is the radius, HY is unused, yaw has no effect
             lines.append(
                 f'    <geom name="stone_{i:02d}" type="cylinder" group="1" '
-                f'size="{sx:.4f} {hz:.4f}" '
+                f'size="{hx:.4f} {hz:.4f}" '
                 f'pos="{x:.4f} {y:.4f} {zc:.4f}" {rgba}/>'
             )
         else:
-            qw, qx, qy, qz = yaw_to_quat(r["yaw"])
+            qw, qx, qy, qz = yaw_to_quat(s["yaw"])
             lines.append(
                 f'    <geom name="stone_{i:02d}" type="box" group="1" '
-                f'size="{sx:.4f} {sy:.4f} {hz:.4f}" '
+                f'size="{hx:.4f} {hy:.4f} {hz:.4f}" '
                 f'pos="{x:.4f} {y:.4f} {zc:.4f}" '
                 f'quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" {rgba}/>'
             )
 
-    # 3) collision-free foot-target markers: left = red, right = blue
+    # 3) markers at raw CSV targets (no offset) — command / policy goal
     rad = args.marker_radius
     for i, r in enumerate(rows):
-        x = r["x"] + ox
-        y = r["y"] + oy
-        z = r["z"] + oz + rad  # rest on the stone's top face
+        x, y, z = r["x"], r["y"], r["z"] + rad
         color = COLOR_TARGET_L if r["foot"] == "L" else COLOR_TARGET_R
         lines.append(
             f'    <geom name="target_{r["foot"]}_{i:02d}" type="sphere" group="5" '
@@ -525,10 +549,10 @@ if __name__ == "__main__":
                         "the robot walks onto intact; raise it to also clear "
                         "ahead, or pass a large value for a full circle")
 
-    t.add_argument("--clearance", type=float, default=0.0,
+    t.add_argument("--clearance", type=float, default=0.01,
                    help="how far the filler rock stays below the interpolated "
                         "foot-landing surface [m], outside the flush zones")
-    t.add_argument("--flush-radius", type=float, default=0.3,
+    t.add_argument("--flush-radius", type=float, default=0.35,
                    help="rock cells within this distance of a stepping stone "
                         "match its landing height exactly [m]")
     t.add_argument("--flush-blend", type=float, default=0.25,
@@ -575,10 +599,14 @@ if __name__ == "__main__":
     g.add_argument("--platform-top", type=float, default=DEFAULT_PLATFORM_TOP,
                    help="spawn platform top face height [m] (default: z=0)")
 
-    o = p.add_argument_group("offsets")
-    o.add_argument("--offset-x", type=float, default=-0.03)
-    o.add_argument("--offset-y", type=float, default=0.0)
-    o.add_argument("--offset-z", type=float, default=0.0)
+    o = p.add_argument_group(
+        "offsets (stones/rocks only; spheres stay on CSV targets)")
+    o.add_argument("--offset-x", type=float, default=0.0,
+                   help="stone XY offset in each foot's yaw frame, forward [m]")
+    o.add_argument("--offset-y", type=float, default=0.0,
+                   help="stone XY offset in each foot's yaw frame, left [m]")
+    o.add_argument("--offset-z", type=float, default=0.0,
+                   help="stone top height offset in world-up [m]")
 
     args = p.parse_args()
     if args.corridor[1] <= args.corridor[0]:

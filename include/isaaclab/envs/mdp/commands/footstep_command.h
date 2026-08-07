@@ -55,6 +55,7 @@ enum class FootStateSource
 {
     FK_ODOMETRY, // default: accumulate FK landing measurements (stance_world_)
     SIM_ODOM,    // MuJoCo sim: rt/odommodestate base position + FK foot offset
+    MUJOCO,      // MuJoCo sim: ankle-roll body xpos/yaw from odom.foot_position_body
 };
 
 struct FrameState
@@ -268,6 +269,12 @@ public:
     void set_base_pos_world(const math::Vec3& p) { base_pos_world_ = p; }
     const math::Vec3& base_pos_world() const { return base_pos_world_; }
 
+    // Sim only (foot_state_source=mujoco): ankle-roll body world pose each tick.
+    void set_mujoco_foot_pose(Kinematics::Side s, const WorldPose& p)
+    {
+        foot_mujoco_[s == Kinematics::LEFT ? 0 : 1] = p;
+    }
+
     // --- public API mirroring CommandTerm ---
     // `keep_goal_progress` (goal mode only) re-anchors the planner on the
     // robot's current state without rewinding to the first goal - used to walk
@@ -276,6 +283,8 @@ public:
     {
         command_counter_ = 0;
         if (!keep_goal_progress) step_counter_ = 0;
+        // Next hold_standby must re-solve IK from the pose we are standing in.
+        standby_ik_latched_ = false;
         // A fresh resample owns the world anchor, so stop tracking the IMU until
         // it has set one (some resamples call update_link_states_ themselves).
         if (!keep_goal_progress) world_yaw_latched_ = false;
@@ -290,8 +299,8 @@ public:
             world_yaw_latched_ = true;
         }
         update_link_states_();
-        if (foot_state_source_ == FootStateSource::SIM_ODOM && !global_mode_)
-            init_stance_world_from_sim_();
+        if (uses_absolute_foot_() && !global_mode_)
+            init_stance_world_from_abs_();
         generate_vrp_ref_trajectory_();
         preview_.reset_error_integral();
         Eigen::Matrix3f s = Eigen::Matrix3f::Zero();
@@ -344,28 +353,33 @@ public:
     // Called instead of compute() while State_Footstep waits for the operator to
     // start walking, and while the gait is stopped at a goal.
     //
-    // The IK target is SOLVED for `com_z` rather than snapped to the default
-    // joint pose: the robot may have walked its way to a crouch (or a taller
-    // stance) via the active goal's com_z, and standing still must not silently
-    // undo that. This pose is the static equilibrium of the walking reference -
-    // pelvis over the midpoint of the two feet at vrp_height + com_z - so the
-    // target stays continuous across the gait/stop boundary.
+    // IK is solved once on the first call (or when com_z changes) and then
+    // latched: re-solving every tick from measured feet would let sway chase
+    // the IK observation. reset() clears the latch so the next stop re-solves
+    // from the pose the robot is actually in.
     void hold_standby(float com_z)
     {
-        update_link_states_(); // compute() is not running while standing by
+        update_link_states_(); // keep measured state / IMU yaw fresh for resume
 
-        math::Vec3 pelv_pos_stance(0.5f * swing_foot_stance_pos_[0],
-                                   0.5f * swing_foot_stance_pos_[1],
-                                   cfg_.vrp_height + com_z + cfg_.pelv_com_offset);
-        // heading settles at the mean of the two feet, as it does during DSP
-        const float mid_yaw = 0.5f * math::wrap_to_pi(
-            math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
-        const math::Quat pelv_quat_stance = math::quat_from_euler_xyz(0.0f, 0.0f, mid_yaw);
+        const bool need_ik = !standby_ik_latched_ || (com_z != standby_ik_com_z_);
+        if (need_ik)
+        {
+            math::Vec3 pelv_pos_stance(0.5f * swing_foot_stance_pos_[0],
+                                       0.5f * swing_foot_stance_pos_[1],
+                                       cfg_.vrp_height + com_z + cfg_.pelv_com_offset);
+            // heading settles at the mean of the two feet, as it does during DSP
+            const float mid_yaw = 0.5f * math::wrap_to_pi(
+                math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
+            const math::Quat pelv_quat_stance = math::quat_from_euler_xyz(0.0f, 0.0f, mid_yaw);
 
-        solve_leg_ik_(pelv_pos_stance, pelv_quat_stance,
-                      swing_foot_stance_pos_, swing_foot_stance_quat_);
+            solve_leg_ik_(pelv_pos_stance, pelv_quat_stance,
+                          swing_foot_stance_pos_, swing_foot_stance_quat_);
+            for (int i = 0; i < 12; ++i) standby_ik_joints_[i] = target_joint_pos_(i);
+            standby_ik_com_z_ = com_z;
+            standby_ik_latched_ = true;
+        }
 
-        for (int i = 0; i < 12; ++i) command_vec_[i] = target_joint_pos_(i);
+        for (int i = 0; i < 12; ++i) command_vec_[i] = standby_ik_joints_[i];
         command_vec_[12] = 1.0f; // cos(0)
         command_vec_[13] = 0.0f; // sin(0)
         const std::array<float, 9> fc = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.7f, 0.15f, 0.08f};
@@ -438,24 +452,25 @@ public:
     math::Vec3 stance_foot_world() const { return stance_foot_world_pos_(); }
     math::Vec3 swing_foot_world() const
     {
-        if (foot_state_source_ == FootStateSource::SIM_ODOM)
-            return foot_world_pos_sim_(swing_side_());
+        if (uses_absolute_foot_())
+            return foot_world_pos_abs_(swing_side_());
         return swing_foot_world_pos_();
     }
     int phase_indicator0() const { return phase_indicator_.empty() ? 0 : phase_indicator_[0]; }
     // Foot positions in the world frame, resolved to L/R.
     // fk_odometry: accumulated stance_world_ + per-tick FK swing measurement.
     // sim_odom:    odom base position + IMU-rotated FK foot offset (each tick).
+    // mujoco:      ankle-roll body xpos from MuJoCo (via odom.foot_position_body).
     math::Vec3 left_foot_pos() const
     {
-        if (foot_state_source_ == FootStateSource::SIM_ODOM)
-            return foot_world_pos_sim_(Kinematics::LEFT);
+        if (uses_absolute_foot_())
+            return foot_world_pos_abs_(Kinematics::LEFT);
         return (phase_indicator_[0] == 0) ? stance_foot_world_pos_() : swing_foot_world_pos_();
     }
     math::Vec3 right_foot_pos() const
     {
-        if (foot_state_source_ == FootStateSource::SIM_ODOM)
-            return foot_world_pos_sim_(Kinematics::RIGHT);
+        if (uses_absolute_foot_())
+            return foot_world_pos_abs_(Kinematics::RIGHT);
         return (phase_indicator_[0] == 0) ? swing_foot_world_pos_() : stance_foot_world_pos_();
     }
     // Desired leg joint angles (12: left 6 + right 6, SDK 0..11 order).
@@ -504,8 +519,8 @@ private:
     // Valid while phase_indicator_[0] still matches the measured link states.
     WorldPose swing_world_pose_() const
     {
-        if (foot_state_source_ == FootStateSource::SIM_ODOM)
-            return world_pose_from_foot_sim_(swing_side_());
+        if (uses_absolute_foot_())
+            return world_pose_from_foot_abs_(swing_side_());
         const math::Vec3 p = swing_foot_world_pos_();
         const float yaw = math::wrap_to_pi(
             stance_world_.yaw + math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
@@ -535,6 +550,12 @@ private:
             math::quat_mul(robot_quat_w_, kin_->foot_quat(s)))[2]);
     }
 
+    bool uses_absolute_foot_() const
+    {
+        return foot_state_source_ == FootStateSource::SIM_ODOM
+            || foot_state_source_ == FootStateSource::MUJOCO;
+    }
+
     // World foot pose from sim odom base + FK (pelvis frame).
     math::Vec3 foot_world_pos_sim_(Kinematics::Side s) const
     {
@@ -548,10 +569,27 @@ private:
         return WorldPose{pos[0], pos[1], pos[2], yaw};
     }
 
-    // Initialize stance_world_ from the current stance foot (sim_odom, local mode).
-    void init_stance_world_from_sim_()
+    // Absolute world foot pose for sim_odom / mujoco.
+    math::Vec3 foot_world_pos_abs_(Kinematics::Side s) const
     {
-        stance_world_ = world_pose_from_foot_sim_(stance_side_());
+        if (foot_state_source_ == FootStateSource::MUJOCO)
+        {
+            const auto& w = foot_mujoco_[s == Kinematics::LEFT ? 0 : 1];
+            return math::Vec3(w.x, w.y, w.z);
+        }
+        return foot_world_pos_sim_(s);
+    }
+    WorldPose world_pose_from_foot_abs_(Kinematics::Side s) const
+    {
+        if (foot_state_source_ == FootStateSource::MUJOCO)
+            return foot_mujoco_[s == Kinematics::LEFT ? 0 : 1];
+        return world_pose_from_foot_sim_(s);
+    }
+
+    // Initialize stance_world_ from the current stance foot (absolute sources).
+    void init_stance_world_from_abs_()
+    {
+        stance_world_ = world_pose_from_foot_abs_(stance_side_());
     }
 
     // Accumulate the achieved stance pose at a step boundary: the foot that
@@ -560,10 +598,10 @@ private:
     // achieved steps.
     void accumulate_stance_world_()
     {
-        if (foot_state_source_ == FootStateSource::SIM_ODOM)
+        if (uses_absolute_foot_())
         {
             // Absolute world pose of the foot that just landed (swing side).
-            stance_world_ = world_pose_from_foot_sim_(swing_side_());
+            stance_world_ = world_pose_from_foot_abs_(swing_side_());
             return;
         }
         const math::Vec3 sw = swing_foot_stance_pos_;
@@ -904,8 +942,8 @@ private:
         // these harmlessly for a static pose), then ingest the pending frame
         // fed by State_Footstep just before reset() and plan the buffer now.
         update_link_states_();
-        if (foot_state_source_ == FootStateSource::SIM_ODOM)
-            init_stance_world_from_sim_();
+        if (uses_absolute_foot_())
+            init_stance_world_from_abs_();
         if (vision_pending_) { ingest_vision_targets_(); vision_pending_ = false; }
         fill_vision_buffer_();
         spdlog::info("[FootVision] first step primed: slot0={} slot1={} "
@@ -946,7 +984,7 @@ private:
     // moment walking starts: the midpoint of the two feet is the origin and the
     // mean foot heading is zero, which is exactly "the robot starts at
     // x, y, yaw = 0, 0, 0". Nothing is read from config, so it holds on hardware
-    // where there is no known spawn pose. (SIM_ODOM measures the stance foot
+    // where there is no known spawn pose. (sim_odom/mujoco measure the stance foot
     // absolutely instead, putting the goals in the simulator's world frame - the
     // robot spawns at its origin, so the two agree.)
     // Returns the STANCE foot pose in that frame; call after update_link_states_.
@@ -1127,8 +1165,8 @@ private:
         // The world anchor and the current foot poses are needed to plan the
         // first step; reset() only measures them after resample_command_().
         update_link_states_();
-        if (foot_state_source_ == FootStateSource::SIM_ODOM)
-            stance_world_ = world_pose_from_foot_sim_(stance_side_());
+        if (uses_absolute_foot_())
+            stance_world_ = world_pose_from_foot_abs_(stance_side_());
         else if (!keep_progress)
             stance_world_ = goal_anchor_stance_();
         prev_stance_world_ = swing_world_pose_();
@@ -1452,6 +1490,8 @@ private:
 
     FootStateSource foot_state_source_ = FootStateSource::FK_ODOMETRY;
     math::Vec3 base_pos_world_ = math::Vec3::Zero(); // pelvis world pos (sim_odom)
+    // mujoco: ankle-roll body world poses [LEFT, RIGHT] from odom.foot_position_body
+    WorldPose foot_mujoco_[2]{};
     // fk_odometry: stance_world_.yaw == IMU foot yaw + this offset. Latched at
     // reset() so the world frame starts at the configured spawn heading.
     float world_yaw_offset_ = 0.0f;
@@ -1484,6 +1524,11 @@ private:
 
     Eigen::VectorXf target_joint_pos_;
     std::array<float, 24> command_vec_;
+
+    // Latched standby IK (see hold_standby): solved once per stop, then reused.
+    bool standby_ik_latched_ = false;
+    float standby_ik_com_z_ = 0.0f;
+    std::array<float, 12> standby_ik_joints_{};
 };
 
 } // namespace isaaclab
