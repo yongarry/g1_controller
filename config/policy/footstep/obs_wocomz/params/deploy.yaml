@@ -3,11 +3,11 @@
 extends: ../../deploy_base.yaml
 
 # policy_file: 260728_1011_2d_lcp.onnx
-# policy_file: 260801_2338_2d.onnx
+policy_file: 260801_2338_2d.onnx
 # policy_file: 260803_2253_2d_hgain_rew.onnx
 
 # policy_file: 260729_0044_3d_lcp.onnx #<---------unstable
-policy_file: 260802_0625_3d.onnx
+# policy_file: 260802_0625_3d.onnx
 
 
 # The whole group uses history_length=10, skip_history_tick=2 (history-major).

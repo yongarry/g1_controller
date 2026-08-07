@@ -27,10 +27,10 @@ _PROJ_DIR = os.path.dirname(_THIS_DIR)
 DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 
 # Trained command ranges (must match footstep deploy.yaml `footstep.ranges`).
-RANGE_X = (0.2, 0.3)     # forward step length [m]
-RANGE_Y = (0.2, 0.3)      # lateral step width (positive magnitude) [m]
-RANGE_Z = (-0.1, 0.15)   # per-step height change [m]
-RANGE_YAW = (-0.4, 0.4)   # per-step turn [rad]
+RANGE_X = (0.25, 0.25)     # forward step length [m]
+RANGE_Y = (0.237, 0.237)      # lateral step width (positive magnitude) [m]
+RANGE_Z = (0.12, 0.12)   # per-step height change [m]
+RANGE_YAW = (-0, 0)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
@@ -48,9 +48,9 @@ def build_rows(n, start, rx, ry, rz, ryaw, ssp, dsp, height, stop_last):
         if is_last_stop:
             step_x, step_y, step_z, step_yaw = 0.0, NOMINAL_Y, 0.0, 0.0
         elif i == 0:
-            step_x = 0.3
+            step_x = 0.25
             step_y = 0.237
-            step_z = 0.0
+            step_z = 0.128
             # step_yaw = sample(*ryaw)
             step_yaw = 0.0
         else:
@@ -80,7 +80,7 @@ if __name__ == "__main__":
                    metavar=("MIN", "MAX"), help="step_z range [m]")
     p.add_argument("--yaw", nargs=2, type=float, default=list(RANGE_YAW),
                    metavar=("MIN", "MAX"), help="step_yaw range [rad]")
-    p.add_argument("--ssp", type=float, default=0.7, help="single support time [s]")
+    p.add_argument("--ssp", type=float, default=0.9, help="single support time [s]")
     p.add_argument("--dsp", type=float, default=0.15, help="double support time [s]")
     p.add_argument("--height", type=float, default=0.1, help="swing apex height [m]")
     p.add_argument("--no-stop", action="store_true",

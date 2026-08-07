@@ -82,7 +82,7 @@ footstep:
   #   fk_odometry - FK landing accumulation (default, hardware)
   #   sim_odom    - MuJoCo: rt/odommodestate base + FK foot offset
   #   mujoco      - MuJoCo: ankle-roll body xpos/yaw (odom.foot_position_body)
-  foot_state_source: sim_odom  # fk_odometry | sim_odom | mujoco
+  foot_state_source: fk_odometry  # fk_odometry | sim_odom | mujoco
   sim_odom_topic: rt/odommodestate
 
   # Foot-command source:
@@ -97,7 +97,7 @@ footstep:
   #                  seen, then walks the two nearest feasible targets.
   #   "goal"       - walk to the world-frame goal points listed under `goal:`
   #                  below, one after another (see that section).
-  command_source: vision # joystick | csv | csv_global | vision | goal
+  command_source: csv_global # joystick | csv | csv_global | vision | goal
   csv_path: config/footcommands.csv
   global_csv_path: config/footcommands_global.csv
 
@@ -168,16 +168,16 @@ footstep:
   goal:
     # [x, y, yaw, com_z]
     points:
-      - [1.5, -1.5, 0.0, -0.2]
-      - [3.0,  1.5, 1.57, 0.1] 
-      - [4.5,  0, 0.0, 0.0]    
+      - [1,  1, 0.0, -0.1]
+      - [2, -1, 1.57, 0.1] 
+      - [3,  0, 0.0, 0.0]    
     step_x_max: 0.2       # [m] nominal (max) forward step
     step_y: 0.2           # [m] nominal lateral step width
     step_yaw_max: 0.2     # [rad] nominal (max) per-step turn
     ssp_t: 0.7            # [s] single support time
     dsp_t: 0.15           # [s] double support time
     height: 0.08          # [m] swing apex height
-    reach_radius: 0.05    # [m] a goal this close counts as reached
+    reach_radius: 0.1    # [m] a goal this close counts as reached
     reach_yaw: 0.1        # [rad] heading tolerance (goals that specify a yaw)
     align_radius: 1.0     # [m] start blending into the goal heading here
     com_z_rate: 0.02      # Largest com_z change per footstep. The commanded height is rate-limited
