@@ -88,6 +88,8 @@ public:
         float step_dt = 0.02f;
         float vrp_height = 0.6607f;
         float pelv_com_offset = 0.0761f;
+        float vrpx_offset = 0.03f;   // VRP forward bias in foot yaw frame [m]
+        float vrpy_offset = 0.02f;   // VRP lateral bias toward stance [m]
         float vrp_horizon_length = 5.0f;
         float preview_horizon_length = 2.0f;
         // Ablation: which CoM reference the policy was trained against. The
@@ -111,7 +113,8 @@ public:
 
     FootstepCommand(const Config& cfg, std::shared_ptr<Kinematics> kin)
     : cfg_(cfg), kin_(std::move(kin)),
-      vrp_(cfg.vrp_horizon_length, cfg.step_dt, cfg.future_foot_step_num, cfg.vrp_height),
+      vrp_(cfg.vrp_horizon_length, cfg.step_dt, cfg.future_foot_step_num, cfg.vrp_height,
+           cfg.vrpx_offset, cfg.vrpy_offset),
       preview_(cfg.preview_horizon_length, cfg.step_dt, cfg.vrp_height)
     {
         const int LA = cfg_.future_foot_step_num;

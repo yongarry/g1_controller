@@ -56,6 +56,9 @@ footstep:
   # pelv_com_offset: 0.0761
   vrp_height: 0.6258
   pelv_com_offset: 0.0678
+  # VRP XY bias in each foot's yaw frame (forward / toward stance).
+  vrpx_offset: 0.03
+  vrpy_offset: 0.02
   vrp_horizon_length: 4.0
   preview_horizon_length: 1.6
   # CoM reference generator
@@ -169,7 +172,7 @@ footstep:
     # [x, y, yaw, com_z]
     points:
       - [2.2,  -2,  -1.57, -0.1]
-      - [0.9,  1.7, 1.57,  0.03] 
+      - [0.9,  1.7, 1.57,  0.05] 
       # - [3,  0,  0.0,   0.0]    
     step_x_max: 0.25       # [m] nominal (max) forward step
     step_y: 0.2           # [m] nominal lateral step width
@@ -191,7 +194,7 @@ footstep:
            0.5, 0.25, 0.0, -0.8, 0.0, 0.0, 0.0,
            0.2, -0.2, 0.0, 1.1,  0.0, 0.0, 0.0]
         - [0.0, 0.0, 0.05,
-           -2.2, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
+           -2.3, 0.5, 0.0, 1.57, 1.57, 0.0, 0.0,
            0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
         # - [0.0, 0.0, 0.2,
         #    0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,

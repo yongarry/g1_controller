@@ -135,6 +135,8 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     fcfg.step_dt = deploy["step_dt"].as<float>();
     fcfg.vrp_height = fs["vrp_height"].as<float>();
     fcfg.pelv_com_offset = fs["pelv_com_offset"].as<float>();
+    fcfg.vrpx_offset = fs["vrpx_offset"].as<float>(0.03f);
+    fcfg.vrpy_offset = fs["vrpy_offset"].as<float>(0.02f);
     fcfg.vrp_horizon_length = fs["vrp_horizon_length"].as<float>(5.0f);
     fcfg.preview_horizon_length = fs["preview_horizon_length"].as<float>(2.0f);
     // Ablation cases: must match the com_generate_type the policy was trained
