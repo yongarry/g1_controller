@@ -506,9 +506,9 @@ void State_Footstep::open_eval_file(const std::string& path)
     }
     eval_file_ << std::fixed << std::setprecision(6);
     eval_file_ << "step,foot,"
-                  "cmd_x,cmd_y,cmd_yaw,"
-                  "meas_x,meas_y,meas_yaw,"
-                  "err_x,err_y,err_yaw,"
+                  "cmd_x,cmd_y,cmd_z,cmd_yaw,"
+                  "meas_x,meas_y,meas_z,meas_yaw,"
+                  "err_x,err_y,err_z,err_yaw,"
                   "ssp_t,dsp_t,height\n";
     eval_enabled_ = true;
     spdlog::info("[FootEval] per-step tracking error -> '{}'.", stamped.string());
@@ -518,15 +518,15 @@ void State_Footstep::write_eval_row()
 {
     if (!eval_enabled_) return;
     const auto& c = *command_;
-    const isaaclab::math::Vec3& cmd = c.last_step_command();
-    const isaaclab::math::Vec3& meas = c.last_step_measured();
-    const isaaclab::math::Vec3& err = c.last_step_error();
-    const isaaclab::math::Vec3& tim = c.last_step_timing(); // [ssp_t, dsp_t, height]
+    const isaaclab::math::Vec3& cmd = c.last_step_command();   // [x, y, z]
+    const isaaclab::math::Vec3& meas = c.last_step_measured(); // [x, y, z]
+    const isaaclab::math::Vec3& err = c.last_step_error();     // [ex, ey, ez]
+    const isaaclab::math::Vec3& tim = c.last_step_timing();    // [ssp_t, dsp_t, height]
 
     eval_file_ << c.step_counter() << "," << (c.last_step_swing_right() ? "R" : "L") << ","
-               << cmd[0] << "," << cmd[1] << "," << cmd[2] << ","
-               << meas[0] << "," << meas[1] << "," << meas[2] << ","
-               << err[0] << "," << err[1] << "," << err[2] << ","
+               << cmd[0] << "," << cmd[1] << "," << cmd[2] << "," << c.last_step_command_yaw() << ","
+               << meas[0] << "," << meas[1] << "," << meas[2] << "," << c.last_step_measured_yaw() << ","
+               << err[0] << "," << err[1] << "," << err[2] << "," << c.last_step_yaw_error() << ","
                << tim[0] << "," << tim[1] << "," << tim[2] << "\n";
     eval_file_.flush(); // a run is often ended with Ctrl+C
 }
@@ -748,10 +748,13 @@ void State_Footstep::enter()
                 {
                     write_eval_row();
                     const auto& e = command_->last_step_error();
-                    spdlog::info("Foot Position error : {:.4f} [m]", std::sqrt(e[0]*e[0] + e[1]*e[1]));
+                    spdlog::info("Foot Position error : {:.4f} [m]",
+                                 std::sqrt(e[0]*e[0] + e[1]*e[1] + e[2]*e[2]));
                     spdlog::info(">> X error : {:.4f} [m]", std::abs(e[0]));
                     spdlog::info(">> Y error : {:.4f} [m]", std::abs(e[1]));
-                    spdlog::info("Foot Yaw error : {:.4f} [rad]", std::abs(e[2]));
+                    spdlog::info(">> Z error : {:.4f} [m]", std::abs(e[2]));
+                    spdlog::info("Foot Yaw error : {:.4f} [rad]",
+                                 std::abs(command_->last_step_yaw_error()));
                     const auto& fc = command_->foot_command0();
                     // foot_command0: [x, y, z, roll, pitch, yaw, ssp_t, dsp_t, height]
                     spdlog::info("Next foot step command : x={:.4f} y={:.4f} z={:.4f} [m], yaw={:.4f} [rad]",

@@ -31,7 +31,7 @@ DEFAULT_GLOB_MYS = os.path.join(_LOG_DIR, "footstep_eval_mys_*.csv")
 DEFAULT_PLOT = os.path.join(_LOG_DIR, "footstep_eval.png")
 DEFAULT_PLOT_MYS = os.path.join(_LOG_DIR, "footstep_eval_mys.png")
 
-AXES = [("err_x", "x [m]"), ("err_y", "y [m]"), ("err_yaw", "yaw [rad]")]
+AXES = [("err_x", "x [m]"), ("err_y", "y [m]"), ("err_z", "z [m]"), ("err_yaw", "yaw [rad]")]
 
 
 def latest_eval_csv(mys: bool) -> str:
@@ -60,6 +60,10 @@ def read_rows(paths):
             r = list(csv.DictReader(f))
         if not r:
             raise SystemExit(f"no data rows in {p}")
+        # Old schema had no z columns; fill zeros so downstream stats work.
+        for row in r:
+            for k in ("cmd_z", "meas_z", "err_z"):
+                row.setdefault(k, "0")
         rows.extend(r)
     return rows
 
@@ -125,17 +129,18 @@ def write_plot(rows, path):
         print(f"\n[plot] matplotlib not available, skipping {path}")
         return
     steps = [int(r["step"]) for r in rows]
-    fig, ax = plt.subplots(4, 1, figsize=(9, 9), sharex=True)
+    n_err = len(AXES)
+    fig, ax = plt.subplots(n_err + 1, 1, figsize=(9, 2.2 * (n_err + 1)), sharex=True)
     for i, (key, label) in enumerate(AXES):
         ax[i].plot(steps, [float(r[key]) for r in rows], ".-", lw=0.8, ms=3)
         ax[i].axhline(0, color="k", lw=0.5)
         ax[i].set_ylabel(f"err {label}")
         ax[i].grid(alpha=0.3)
-    ax[3].plot(steps, [math.hypot(float(r["err_x"]), float(r["err_y"])) for r in rows],
-               ".-", lw=0.8, ms=3, color="tab:red")
-    ax[3].set_ylabel("|xy| [m]")
-    ax[3].set_xlabel("footstep")
-    ax[3].grid(alpha=0.3)
+    ax[n_err].plot(steps, [math.hypot(float(r["err_x"]), float(r["err_y"])) for r in rows],
+                   ".-", lw=0.8, ms=3, color="tab:red")
+    ax[n_err].set_ylabel("|xy| [m]")
+    ax[n_err].set_xlabel("footstep")
+    ax[n_err].grid(alpha=0.3)
     fig.suptitle("Footstep landing error (commanded - measured, stance frame)")
     fig.tight_layout()
     fig.savefig(path, dpi=130)

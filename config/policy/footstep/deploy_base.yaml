@@ -49,7 +49,8 @@ actions:
 footstep:
   log_file: log/footstep_log.txt   # 상대경로는 proj_dir 기준, ""로 두면 비활성화
   # Per-step landing error log template. On enter a timestamped file is created,
-  # e.g. log/footstep_eval_260804_162830.csv. "" disables.
+  # e.g. log/footstep_eval_260804_162830.csv. Columns:
+  #   cmd/meas/err {x,y,z,yaw}, ssp_t, dsp_t, height. "" disables.
   eval_file: log/footstep_eval.csv
   future_foot_step_num: 2
   # vrp_height: 0.6607
@@ -85,7 +86,7 @@ footstep:
   #   fk_odometry - FK landing accumulation (default, hardware)
   #   sim_odom    - MuJoCo: rt/odommodestate base + FK foot offset
   #   mujoco      - MuJoCo: ankle-roll body xpos/yaw (odom.foot_position_body)
-  foot_state_source: fk_odometry  # fk_odometry | sim_odom | mujoco
+  foot_state_source: sim_odom  # fk_odometry | sim_odom | mujoco
   sim_odom_topic: rt/odommodestate
 
   # Foot-command source:
@@ -100,7 +101,7 @@ footstep:
   #                  seen, then walks the two nearest feasible targets.
   #   "goal"       - walk to the world-frame goal points listed under `goal:`
   #                  below, one after another (see that section).
-  command_source: goal # joystick | csv | csv_global | vision | goal
+  command_source: csv # joystick | csv | csv_global | vision | goal
   csv_path: config/footcommands.csv
   global_csv_path: config/footcommands_global.csv
 

@@ -333,11 +333,15 @@ public:
             const float sw_yaw = math::wrap_to_pi(math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
             last_step_error_[0] = foot_command_[0][0] - swing_foot_stance_pos_[0];
             last_step_error_[1] = foot_command_[0][1] - swing_foot_stance_pos_[1];
-            last_step_error_[2] = math::wrap_to_pi(foot_command_[0][5] - sw_yaw);
+            last_step_error_[2] = foot_command_[0][2] - swing_foot_stance_pos_[2];
+            last_step_yaw_error_ = math::wrap_to_pi(foot_command_[0][5] - sw_yaw);
             last_step_total_time_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
             // Keep the raw pair the error was formed from, for evaluation logs.
-            last_step_cmd_ = math::Vec3(foot_command_[0][0], foot_command_[0][1], foot_command_[0][5]);
-            last_step_meas_ = math::Vec3(swing_foot_stance_pos_[0], swing_foot_stance_pos_[1], sw_yaw);
+            last_step_cmd_ = math::Vec3(foot_command_[0][0], foot_command_[0][1], foot_command_[0][2]);
+            last_step_cmd_yaw_ = foot_command_[0][5];
+            last_step_meas_ = math::Vec3(swing_foot_stance_pos_[0], swing_foot_stance_pos_[1],
+                                         swing_foot_stance_pos_[2]);
+            last_step_meas_yaw_ = sw_yaw;
             last_step_timing_ = math::Vec3(foot_command_[0][6], foot_command_[0][7], foot_command_[0][8]);
             last_step_swing_right_ = (phase_indicator_[0] == 0);
             ++step_counter_;
@@ -398,15 +402,18 @@ public:
     bool step_completed() const { return step_completed_; }
 
     // Landing error of the footstep that just completed: commanded step minus
-    // the measured swing-foot landing, in the stance frame. Layout: [x, y, yaw].
+    // the measured swing-foot landing, in the stance frame. Layout: [x, y, z].
     // Only meaningful on ticks where step_completed() is true.
     const math::Vec3& last_step_error() const { return last_step_error_; }
+    float last_step_yaw_error() const { return last_step_yaw_error_; }
     // Total duration (ssp + 2*dsp) of that completed step.
     float last_step_total_time() const { return last_step_total_time_; }
     // The commanded and measured swing-foot landing the error was formed from
-    // (stance frame, [x, y, yaw]); their difference is last_step_error().
+    // (stance frame, [x, y, z]); their difference is last_step_error().
     const math::Vec3& last_step_command() const { return last_step_cmd_; }
+    float last_step_command_yaw() const { return last_step_cmd_yaw_; }
     const math::Vec3& last_step_measured() const { return last_step_meas_; }
+    float last_step_measured_yaw() const { return last_step_meas_yaw_; }
     // Timings that step ran with: [ssp_t, dsp_t, height]. Captured because
     // foot_command0() has already shifted to the next step by the time the
     // caller sees step_completed().
@@ -620,23 +627,25 @@ private:
     }
 
     // Build the 9-dim foot command for `step` from the operator input + phase.
+    // Local per-step command from operator input (joystick / csv). Also used as
+    // the vision-mode station-keeping fallback. csv_global / goal use their own builders.
     std::array<float, 9> build_foot_command_(int step)
     {
         std::array<float, 9> fc{};
-        fc[0] = clampf(input_.step_x, cfg_.foot_pos_x_min, cfg_.foot_pos_x_max);
+        fc[0] = input_.step_x;
         // Nominal width is symmetric; lateral_bias shifts net CoM sideways by
         // widening the left-swing step and narrowing the right-swing step.
         const float y_mag = (phase_indicator_[step] == 1)
-            ? clampf(input_.step_y + input_.lateral_bias, cfg_.foot_pos_y_min, cfg_.foot_pos_y_max)
-            : clampf(input_.step_y - input_.lateral_bias, cfg_.foot_pos_y_min, cfg_.foot_pos_y_max);
+            ? (input_.step_y + input_.lateral_bias)
+            : (input_.step_y - input_.lateral_bias);
         fc[1] = (phase_indicator_[step] == 0) ? -y_mag : y_mag;
-        fc[2] = clampf(input_.step_z, cfg_.foot_pos_z_min, cfg_.foot_pos_z_max);
+        fc[2] = input_.step_z;
         fc[3] = 0.0f;
         fc[4] = 0.0f;
-        fc[5] = clampf(input_.step_yaw, cfg_.foot_rot_y_min, cfg_.foot_rot_y_max);
-        fc[6] = clampf(input_.ssp_t, cfg_.foot_ssp_min, cfg_.foot_ssp_max);
-        fc[7] = clampf(input_.dsp_t, cfg_.foot_dsp_min, cfg_.foot_dsp_max);
-        fc[8] = clampf(input_.height, cfg_.foot_height_min, cfg_.foot_height_max);
+        fc[5] = input_.step_yaw;
+        fc[6] = input_.ssp_t;
+        fc[7] = input_.dsp_t;
+        fc[8] = input_.height;
         return fc;
     }
 
@@ -1448,9 +1457,12 @@ private:
     float time_left_ = 0.0f;
     bool step_completed_ = false;
     // landing error of the last completed footstep (stance frame): [x, y, yaw]
-    math::Vec3 last_step_error_ = math::Vec3::Zero();
-    math::Vec3 last_step_cmd_ = math::Vec3::Zero();  // commanded landing [x, y, yaw]
-    math::Vec3 last_step_meas_ = math::Vec3::Zero(); // measured landing  [x, y, yaw]
+    math::Vec3 last_step_error_ = math::Vec3::Zero(); // [err_x, err_y, err_z]
+    float last_step_yaw_error_ = 0.0f;
+    math::Vec3 last_step_cmd_ = math::Vec3::Zero();  // commanded landing [x, y, z]
+    float last_step_cmd_yaw_ = 0.0f;
+    math::Vec3 last_step_meas_ = math::Vec3::Zero(); // measured landing  [x, y, z]
+    float last_step_meas_yaw_ = 0.0f;
     math::Vec3 last_step_timing_ = math::Vec3::Zero(); // [ssp_t, dsp_t, height]
     bool last_step_swing_right_ = true;
     long step_counter_ = 0;

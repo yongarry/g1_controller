@@ -199,10 +199,11 @@ void State_MindYourStep::open_eval_file(const std::string& path)
     }
     eval_file_ << std::fixed << std::setprecision(6);
     // Same schema as State_Footstep so cmd/eval_footstep.py can pool both.
+    // MindYourStep does not track landing z; write 0 for cmd/meas/err z.
     eval_file_ << "step,foot,"
-                  "cmd_x,cmd_y,cmd_yaw,"
-                  "meas_x,meas_y,meas_yaw,"
-                  "err_x,err_y,err_yaw,"
+                  "cmd_x,cmd_y,cmd_z,cmd_yaw,"
+                  "meas_x,meas_y,meas_z,meas_yaw,"
+                  "err_x,err_y,err_z,err_yaw,"
                   "ssp_t,dsp_t,height\n";
     eval_enabled_ = true;
     spdlog::info("[MysEval] per-step tracking error -> '{}'.", stamped.string());
@@ -220,9 +221,9 @@ void State_MindYourStep::write_eval_row(float meas_x, float meas_y, float meas_y
 
     eval_file_ << gait_->step_counter() << ","
                << (gait_->last_step_swing_right() ? "R" : "L") << ","
-               << cmd_x << "," << cmd_y << "," << cmd_yaw << ","
-               << meas_x << "," << meas_y << "," << meas_yaw << ","
-               << err_x << "," << err_y << "," << err_yaw << ","
+               << cmd_x << "," << cmd_y << "," << 0.0f << "," << cmd_yaw << ","
+               << meas_x << "," << meas_y << "," << 0.0f << "," << meas_yaw << ","
+               << err_x << "," << err_y << "," << 0.0f << "," << err_yaw << ","
                << gait_->last_ssp_t() << "," << gait_->last_dsp_t() << ","
                << gait_->last_height() << "\n";
     eval_file_.flush();
