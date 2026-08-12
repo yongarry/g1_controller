@@ -168,14 +168,14 @@ footstep:
   goal:
     # [x, y, yaw, com_z]
     points:
-      - [1.5,  1.5,  1.57, -0.1]
-      - [2.0, -1.5, 0.0,  0.05] 
-      - [3,  0,  0.0,   0.0]    
+      - [2.2,  -2,  -1.57, -0.1]
+      - [0.9,  1.7, 1.57,  0.03] 
+      # - [3,  0,  0.0,   0.0]    
     step_x_max: 0.25       # [m] nominal (max) forward step
     step_y: 0.2           # [m] nominal lateral step width
-    step_yaw_max: 0.5     # [rad] nominal (max) per-step turn
-    ssp_t: 0.7            # [s] single support time
-    dsp_t: 0.15           # [s] double support time
+    step_yaw_max: 0.4     # [rad] nominal (max) per-step turn
+    ssp_t: 0.6            # [s] single support time
+    dsp_t: 0.1           # [s] double support time
     height: 0.08          # [m] swing apex height
     reach_radius: 0.1    # [m] a goal this close counts as reached
     reach_yaw: 0.1        # [rad] heading tolerance (goals that specify a yaw)
@@ -187,15 +187,15 @@ footstep:
       move_time: 1.5     # [s] upper-body interpolation time
       hold_time: 2.0     # [s] extra pause after the motion before walking on
       upper_body_pose:
-        - [0.0, 0.0, 0.2,
-           0.77, 0.25, 0.0, -0.8, -1.57, 0.0, 0.0,
-           0.77, -0.25, 0.0, -0.8,  1.57, 0.0, 0.0]
-        - [0.0, 0.0, 0.3,
-           0.0, 0.5, 0.2, 0.0, 0.0, 0.0, 0.0,
-           0.0, -0.5, -0.2, 0.0, 0.0, 0.0, 0.0]
-        - [0.0, 0.0, 0.2,
-           0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
+        - [0.0, 0.0, 0.25,
+           0.5, 0.25, 0.0, -0.8, 0.0, 0.0, 0.0,
+           0.2, -0.2, 0.0, 1.1,  0.0, 0.0, 0.0]
+        - [0.0, 0.0, 0.05,
+           -2.2, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
            0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
+        # - [0.0, 0.0, 0.2,
+        #    0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
+        #    0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
 
   # --- vision command source (command_source == "vision") -------------------
   # ArUco footstep targets (4x 3x3-bit markers per target). Scene/markers/board

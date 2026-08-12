@@ -35,7 +35,8 @@ NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
 # Fixed per-step z scene (uncomment to use). Length must equal `step` (incl. stop).
 # x/y/yaw still come from --x/--y/--yaw (or RANGE_*). Example 10-step climb:
-SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, -0.12, -0.12, -0.12, -0.12, -0.128, 0.0, 0.0]
+SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.00, -0.15, -0.15, -0.15, -0.158,  0.0, 0.0]
+SCENE_X = [0.400, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0,  0.25,  0.25,  0.25,  0.25,  0.25, 0.0]
 # SCENE_Z = None
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
@@ -55,16 +56,10 @@ def build_rows(n, start, rx, ry, rz, ryaw, ssp, dsp, height, stop_last, scene_z=
         if is_last_stop:
             step_x, step_y, step_z, step_yaw = 0.0, NOMINAL_Y, 0.0, 0.0
         elif scene_z is not None:
-            if i == 0:
-                step_x = 0.4
-                step_y = 0.237
-                step_z = 0.128
-                step_yaw = 0.0
-            else:
-                step_x = sample(*rx)
-                step_y = sample(*ry)
-                step_z = float(scene_z[i])
-                step_yaw = sample(*ryaw)
+            step_x = float(SCENE_X[i])
+            step_y = 0.237
+            step_z = float(scene_z[i])
+            step_yaw = 0.0
         elif i == 0:
             step_x = 0.4
             step_y = 0.237

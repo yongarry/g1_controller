@@ -751,7 +751,9 @@ void State_Footstep::enter()
                     spdlog::info(">> Y error : {:.4f} [m]", std::abs(e[1]));
                     spdlog::info("Foot Yaw error : {:.4f} [rad]", std::abs(e[2]));
                     const auto& fc = command_->foot_command0();
-                    spdlog::info("Next foot step command : {:.4f} [m], {:.4f} [m], {:.4f} [rad]", fc[0], fc[1], fc[5]);
+                    // foot_command0: [x, y, z, roll, pitch, yaw, ssp_t, dsp_t, height]
+                    spdlog::info("Next foot step command : x={:.4f} y={:.4f} z={:.4f} [m], yaw={:.4f} [rad]",
+                                 fc[0], fc[1], fc[2], fc[5]);
                     // spdlog::info("t_total: {:.3f}", command_->last_step_total_time());
                 }
 
