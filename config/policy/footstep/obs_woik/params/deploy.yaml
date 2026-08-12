@@ -2,7 +2,8 @@
 # Shared settings live in ../../deploy_base.yaml — edit that for common changes.
 extends: ../../deploy_base.yaml
 
-policy_file: policy.onnx
+# policy_file: 260808_1848_2d_nolcp.onnx
+policy_file: 260809_1522_3d_nolcp.onnx
 
 # The whole group uses history_length=10, skip_history_tick=2 (history-major).
 observations:
@@ -43,7 +44,7 @@ observations:
     clip: null
     history_length: 10
     skip_history_tick: 2
-  foot_commands_3d:
+  foot_commands_3d_w_comz:
     params: {}
     scale: null
     clip: null

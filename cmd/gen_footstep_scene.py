@@ -71,7 +71,7 @@ DEFAULT_BOARD = os.path.join(_PROJ_DIR, "config", "aruco_board.json")
 # COLOR_L = "0.30 0.45 0.80 1"  # left foot
 
 # COLOR_R = "0. 0.3 0.5 1"  # right foot
-COLOR_R = "0.3 0.3 0.3 1"  # right foot
+COLOR_R = "0.45 0.28 0.12 1"  # right foot (brown)
 COLOR_L = COLOR_R  # left foot
 COLOR_GROUND = "0.7 0.6 0.5 1"
 COLOR_PLATFORM = COLOR_R
@@ -189,7 +189,7 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
     plane_hy = 0.5 * (max(ys) - min(ys)) + plane_margin
 
     lines = [
-        f'    <geom name="start_platform" type="box" '
+        f'    <geom name="start_platform" type="box" group="6"'
         f'size="{plat_hx:.4f} {plat_hy:.4f} {plat_hz:.4f}" '
         f'pos="0 0 {plat_zc:.4f}" '
         f'rgba="{COLOR_PLATFORM}"/>',
@@ -305,8 +305,8 @@ if __name__ == "__main__":
     p.add_argument("--xml", default=DEFAULT_XML, help="MuJoCo scene XML to edit")
     p.add_argument("--shape", choices=["box", "cylinder"], default="box",
                    help="box: yaw-aligned rectangle (default); cylinder: round pillar")
-    # p.add_argument("--size", nargs="+", type=float, default=[0.1, 10.06],
-    p.add_argument("--size", nargs="+", type=float, default=[0.1, 0.1, 0.1],
+    p.add_argument("--size", nargs="+", type=float, default=[0.125, 10.06],
+    # p.add_argument("--size", nargs="+", type=float, default=[0.1, 0.1, 0.1],
                    metavar="H",
                    help="HX HY [HZ]: box half-extents [m] (cylinder: radius=HX, HY ignored). "
                         "If HZ given, vertical half-size is fixed (top at pos_z); "
@@ -318,7 +318,7 @@ if __name__ == "__main__":
                    help="spawn platform horizontal half-extents [m]")
     p.add_argument("--platform-top", type=float, default=DEFAULT_PLATFORM_TOP,
                    help="spawn platform top face height [m] (default: z=0)")
-    p.add_argument("--offset-x", type=float, default=-0.03,
+    p.add_argument("--offset-x", type=float, default=-0.0,
                    help="stone XY offset in each foot's yaw frame, forward [m] "
                         "(spheres stay on CSV)")
     p.add_argument("--offset-y", type=float, default=0.0,

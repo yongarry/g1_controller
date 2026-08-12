@@ -30,8 +30,13 @@ DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 RANGE_X = (0.25, 0.25)     # forward step length [m]
 RANGE_Y = (0.237, 0.237)      # lateral step width (positive magnitude) [m]
 RANGE_Z = (0.12, 0.12)   # per-step height change [m]
-RANGE_YAW = (-0, 0)   # per-step turn [rad]
+RANGE_YAW = (-0., 0.)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
+
+# Fixed per-step z scene (uncomment to use). Length must equal `step` (incl. stop).
+# x/y/yaw still come from --x/--y/--yaw (or RANGE_*). Example 10-step climb:
+SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, -0.12, -0.12, -0.12, -0.12, -0.128, 0.0, 0.0]
+# SCENE_Z = None
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
 
@@ -40,18 +45,30 @@ def sample(lo, hi):
     return random.uniform(lo, hi)
 
 
-def build_rows(n, start, rx, ry, rz, ryaw, ssp, dsp, height, stop_last):
+def build_rows(n, start, rx, ry, rz, ryaw, ssp, dsp, height, stop_last, scene_z=None):
+    if scene_z is not None and len(scene_z) != n:
+        raise ValueError(f"SCENE_Z length {len(scene_z)} != step {n}")
     rows = []
     for i in range(n):
         foot = start if i % 2 == 0 else ("L" if start == "R" else "R")
         is_last_stop = stop_last and (i == n - 1)
         if is_last_stop:
             step_x, step_y, step_z, step_yaw = 0.0, NOMINAL_Y, 0.0, 0.0
+        elif scene_z is not None:
+            if i == 0:
+                step_x = 0.4
+                step_y = 0.237
+                step_z = 0.128
+                step_yaw = 0.0
+            else:
+                step_x = sample(*rx)
+                step_y = sample(*ry)
+                step_z = float(scene_z[i])
+                step_yaw = sample(*ryaw)
         elif i == 0:
-            step_x = 0.25
+            step_x = 0.4
             step_y = 0.237
             step_z = 0.128
-            # step_yaw = sample(*ryaw)
             step_yaw = 0.0
         else:
             step_x = sample(*rx)
@@ -95,7 +112,8 @@ if __name__ == "__main__":
         random.seed(args.seed)
 
     rows = build_rows(args.step, args.start, args.x, args.y, args.z, args.yaw,
-                      args.ssp, args.dsp, args.height, stop_last=not args.no_stop)
+                      args.ssp, args.dsp, args.height, stop_last=not args.no_stop,
+                      scene_z=SCENE_Z)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w", newline="") as f:
@@ -113,7 +131,7 @@ if __name__ == "__main__":
 
     # execute gen_footstep_scene.py to generate footstep cubes in the MuJoCo scene XML
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert2mys.py")])
-    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
-    if not args.real:
-        subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
+    # if not args.real:
+    #     subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])

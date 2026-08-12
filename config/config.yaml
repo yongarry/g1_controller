@@ -113,9 +113,9 @@ FSM:
   Footstep:
     transitions:
       Passive: LT + B.on_pressed
-    # policy_dir: config/policy/footstep/obs_full
-    policy_dir: config/policy/footstep/obs_wocomz
-    # policy_dir: config/policy/footstep/obs_woikdes
+    policy_dir: config/policy/footstep/obs_full
+    # policy_dir: config/policy/footstep/obs_woomz
+    # policy_dir: config/policy/footstep/obs_woik
     # policy_dir: config/policy/footstep/obs_wofcmd
     # policy_dir: config/policy/footstep/obs_wocomz_heuri
   MindYourStep:
