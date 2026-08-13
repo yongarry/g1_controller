@@ -3,8 +3,8 @@
 extends: ../../deploy_base.yaml
 
 # policy_file: 260806_1812_2d_lcp.onnx
-# policy_file: 260807_1418_2d_nolcp.onnx
-policy_file: 260808_1834_3d_nolcp.onnx
+policy_file: 260807_1418_2d_nolcp.onnx
+# policy_file: 260808_1834_3d_nolcp.onnx
 
 # The whole group uses history_length=10, skip_history_tick=2 (history-major).
 observations:

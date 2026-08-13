@@ -959,10 +959,13 @@ private:
         if (vision_pending_) { ingest_vision_targets_(); vision_pending_ = false; }
         fill_vision_buffer_();
         spdlog::info("[FootVision] first step primed: slot0={} slot1={} "
-                     "(memory={}, cmd0: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f})",
+                     "(memory={}, cmd0: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f}"
+                     ", cmd1: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f})",
                      planned_ids_[0], planned_ids_[1], vision_memory_.size(),
                      foot_command_[0][0], foot_command_[0][1],
-                     foot_command_[0][2], foot_command_[0][5]);
+                     foot_command_[0][2], foot_command_[0][5],
+                     foot_command_[1][0], foot_command_[1][1],
+                     foot_command_[1][2], foot_command_[1][5]);
     }
 
     void update_command_vision_()
@@ -974,10 +977,13 @@ private:
         phase_indicator_[LA - 1] = 1 - phase_indicator_[LA - 2];
         fill_vision_buffer_();
         spdlog::info("[FootVision] planned targets: slot0={} slot1={} "
-                     "(memory={}, cmd0: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f})",
+                     "(memory={}, cmd0: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f}"
+                     ", cmd1: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f})",
                      planned_ids_[0], planned_ids_[1], vision_memory_.size(),
                      foot_command_[0][0], foot_command_[0][1],
-                     foot_command_[0][2], foot_command_[0][5]);
+                     foot_command_[0][2], foot_command_[0][5],
+                     foot_command_[1][0], foot_command_[1][1],
+                     foot_command_[1][2], foot_command_[1][5]);
     }
 
     // --- goal command mode ---------------------------------------------------

@@ -128,7 +128,6 @@ if __name__ == "__main__":
 
     # execute gen_footstep_scene.py to generate footstep cubes in the MuJoCo scene XML
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert2mys.py")])
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
-    # if not args.real:
-    #     subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])

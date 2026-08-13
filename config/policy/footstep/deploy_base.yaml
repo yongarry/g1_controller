@@ -126,12 +126,12 @@ footstep:
     foot_height: [0.05, 0.10]
   default_input:
     step_y: 0.237
-    ssp_t: 0.75
-    dsp_t: 0.15
-    height: 0.075
+    ssp_t: 0.5
+    dsp_t: 0.1
+    height: 0.08
     com_z: 0.0
   joystick:
-    x_scale: 0.2
+    x_scale: 0.25
     y_scale: 0.1
     yaw_scale: 0.2
 
@@ -173,7 +173,7 @@ footstep:
     # [x, y, yaw, com_z]
     points:
       - [2.2,  -2,  -1.57, -0.1]
-      - [0.9,  1.7, 1.57,  0.05] 
+      - [0.95,  1.65, 1.57,  0.05] 
       # - [3,  0,  0.0,   0.0]    
     step_x_max: 0.25       # [m] nominal (max) forward step
     step_y: 0.2           # [m] nominal lateral step width
@@ -189,13 +189,13 @@ footstep:
     # What the robot does while stopped at each goal.
     stop:
       move_time: 1.5     # [s] upper-body interpolation time
-      hold_time: 2.0     # [s] extra pause after the motion before walking on
+      hold_time: 2.5     # [s] extra pause after the motion before walking on
       upper_body_pose:
         - [0.0, 0.0, 0.25,
            0.5, 0.25, 0.0, -0.8, 0.0, 0.0, 0.0,
            0.2, -0.2, 0.0, 1.1,  0.0, 0.0, 0.0]
         - [0.0, 0.0, 0.05,
-           -2.3, 0.5, 0.0, 1.57, 1.57, 0.0, 0.0,
+           -2.7, 0.2, 0.0, 1.57, 1.57, 0.0, 0.0,
            0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
         # - [0.0, 0.0, 0.2,
         #    0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
@@ -220,7 +220,7 @@ footstep:
     min_markers: 2        # min detected markers per target for a PnP solve
     max_reproj_px: 2.0    # discard estimates with a larger mean reproj error
     camera:
-      source: sim         # sim (offscreen MuJoCo render) | realsense (D435i)
+      source: realsense        # sim (offscreen MuJoCo render) | realsense (D435i)
       # Requested color mode. On USB 2.x connections the D435i cannot stream
       # every mode; the node matches this against the modes the connection
       # actually supports and falls back automatically (same resolution at a

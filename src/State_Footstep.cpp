@@ -644,6 +644,10 @@ void State_Footstep::enter()
         // would place the targets through a camera pose the head has already
         // moved away from - only the fallback path does that, when the
         // perception node has no robot state of its own.
+        // Rate-limited dump of the vision pipeline (camera -> pelvis -> foot_cmd).
+        // Perception publishes ~camera rate; this only prints ~1 Hz so the
+        // console stays readable while still confirming DDS + FK + planner.
+        auto last_vision_log = clock::now() - std::chrono::seconds(2);
         auto feed_vision = [&]() {
             if (!vision_sub_) return;
             command_->set_vision_clock(std::chrono::duration<double>(
@@ -651,11 +655,45 @@ void State_Footstep::enter()
             isaaclab::VisionFrame vf;
             if (vision_sub_->take(vf))
             {
+                // Snapshot camera-optical poses before to_pelvis rewrites them.
+                const auto cam_targets = vf.targets;
                 const isaaclab::math::Vec3 w =
                     vf.has_waist ? vf.waist
                                  : isaaclab::math::Vec3(q(12), q(13), q(14));
                 vision_cam_tf_.to_pelvis(vf.targets, w[0], w[1], w[2]);
                 command_->set_vision_targets(vf.targets);
+
+                const auto now = clock::now();
+                if (now - last_vision_log >= std::chrono::seconds(1))
+                {
+                    last_vision_log = now;
+                    spdlog::info("[FootVision] recv {} target(s)  waist=[{:.3f},{:.3f},{:.3f}]{}",
+                                 vf.targets.size(), w[0], w[1], w[2],
+                                 vf.has_waist ? " (capture)" : " (tick fallback)");
+                    for (size_t i = 0; i < vf.targets.size(); ++i)
+                    {
+                        const auto& cam = cam_targets[i];
+                        const auto& pel = vf.targets[i];
+                        spdlog::info("  id={:2d}  cam=[{:7.4f}, {:7.4f}, {:7.4f}]  "
+                                     "pelvis=[{:7.4f}, {:7.4f}, {:7.4f}]",
+                                     pel.id,
+                                     cam.pos[0], cam.pos[1], cam.pos[2],
+                                     pel.pos[0], pel.pos[1], pel.pos[2]);
+                    }
+                    // Current planned foot command (stance frame). Before the
+                    // first step / while station-keeping this is the in-place
+                    // default; after priming / step boundaries it is the
+                    // ArUco-derived target (see [FootVision] planned targets).
+                    if (command_->vision_mode())
+                    {
+                        const auto& fc = command_->foot_command0();
+                        const auto& ids = command_->planned_vision_ids();
+                        spdlog::info("  -> foot_cmd0: x={:.4f} y={:.4f} z={:.4f} yaw={:.4f}  "
+                                     "(slot0={} slot1={})",
+                                     fc[0], fc[1], fc[2], fc[5],
+                                     ids[0], ids[1]);
+                    }
+                }
             }
         };
 
@@ -757,8 +795,18 @@ void State_Footstep::enter()
                                  std::abs(command_->last_step_yaw_error()));
                     const auto& fc = command_->foot_command0();
                     // foot_command0: [x, y, z, roll, pitch, yaw, ssp_t, dsp_t, height]
-                    spdlog::info("Next foot step command : x={:.4f} y={:.4f} z={:.4f} [m], yaw={:.4f} [rad]",
-                                 fc[0], fc[1], fc[2], fc[5]);
+                    if (command_->vision_mode())
+                    {
+                        const auto& ids = command_->planned_vision_ids();
+                        spdlog::info("Next foot step command (vision id={}, next={}): "
+                                     "x={:.4f} y={:.4f} z={:.4f} [m], yaw={:.4f} [rad]",
+                                     ids[0], ids[1], fc[0], fc[1], fc[2], fc[5]);
+                    }
+                    else
+                    {
+                        spdlog::info("Next foot step command : x={:.4f} y={:.4f} z={:.4f} [m], yaw={:.4f} [rad]",
+                                     fc[0], fc[1], fc[2], fc[5]);
+                    }
                     // spdlog::info("t_total: {:.3f}", command_->last_step_total_time());
                 }
 

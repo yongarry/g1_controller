@@ -644,14 +644,12 @@ def main():
                   f"{len(targets)} target(s){note}")
             # Published camera-optical poses (what the controller turns into
             # footstep commands). quat = [w, x, y, z].
+            # Published camera-optical poses (controller converts these into
+            # footstep commands via pelvis FK + stance-frame planning).
             for t in targets:
-                # if t["id"] == 0:
-                q = t["quat"]
-                    # yaw about camera optical z is not meaningful; print full pose.
-                print(f"  id={t['id']:2d}  pos=[{t['pos'][0]:7.4f}, "
-                    f"{t['pos'][1]:7.4f}, {t['pos'][2]:7.4f}]  ")
-                        # f"quat=[{q[0]:7.4f}, {q[1]:7.4f}, {q[2]:7.4f}, "
-                        # f"{q[3]:7.4f}]  nmk={t['nmk']}  err={t['err']:.3f}px")
+                print(f"  id={t['id']:2d}  cam_pos=[{t['pos'][0]:7.4f}, "
+                      f"{t['pos'][1]:7.4f}, {t['pos'][2]:7.4f}]  "
+                      f"nmk={t['nmk']}  err={t['err']:.3f}px")
             n_pub = 0
             n_no_waist = 0
             t_detect_ms = 0.0

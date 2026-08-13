@@ -331,17 +331,7 @@ if __name__ == "__main__":
                                     f"\n{marker_geoms}\n    {END_MARK}")
     asset_block = build_marker_assets(n_markers, "aruco_markers")
 
-    # 3) inject into scene XML (inject strips rocky/footstep/aruco regions first)
-    with open(args.xml) as f:
-        xml_text = f.read()
-    xml_text = strip_start_platform(xml_text)
-    xml_text = inject(xml_text, geom_block)                      # worldbody
-    xml_text = inject_region(xml_text, asset_block, ASSET_BEGIN,  # assets
-                             ASSET_END, "</asset>")
-    with open(args.xml, "w") as f:
-        f.write(xml_text)
-
-    # 4) board metadata = stone top-surface center (where ArUco actually sit)
+    # 3) board metadata = stone top-surface center (where ArUco actually sit)
     targets_meta = [
         {"index": i, "foot": s["foot"],
          "world": {"x": s["sx"], "y": s["sy"], "z": s["sz"], "yaw": s["yaw"]}}
@@ -350,6 +340,16 @@ if __name__ == "__main__":
     ac.save_board(args.board, targets_meta, args.dict_bits, dict_size,
                   args.dict_seed, args.marker_size, args.marker_spread,
                   args.quiet_modules)
+
+    # 4) inject into scene XML (inject strips rocky/footstep/aruco regions first)
+    with open(args.xml) as f:
+        xml_text = f.read()
+    xml_text = strip_start_platform(xml_text)
+    xml_text = inject(xml_text, geom_block)                      # worldbody
+    xml_text = inject_region(xml_text, asset_block, ASSET_BEGIN,  # assets
+                             ASSET_END, "</asset>")
+    with open(args.xml, "w") as f:
+        f.write(xml_text)
 
     # 5) printable sheets + PDF
     pdf_path = None
