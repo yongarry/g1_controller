@@ -72,7 +72,7 @@ FSM:
         0.1,-0.2,0,1.1,0,0,0
       ]
     ]
-  # Higher stand for MindYourStep (G1_29DOF_custom).
+  # Stand pose for MindYourStep (G1_29DOF_MYS_CFG).
   FixStand_MYS:
     transitions:
       Passive: LT + B.on_pressed
@@ -95,11 +95,11 @@ FSM:
     ts: [0, 5]
     qs: [
       [],
-      [ -0.2, 0,0,0.5,-0.3,0,
-        -0.2, 0,0,0.5,-0.3,0,
+      [ -0.1, 0,0,0.3,-0.2,0,
+        -0.1, 0,0,0.3,-0.2,0,
         0,0,0,
-        0.1, 0.2,0,1.1,0,0,0,
-        0.1,-0.2,0,1.1,0,0,0
+        0, 0.2,0,1.5,0,0,0,
+        0,-0.2,0,1.5,0,0,0
       ]
     ]
   Velocity:
