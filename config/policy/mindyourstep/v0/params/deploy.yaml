@@ -1,76 +1,96 @@
 # Deploy configuration for the Isaac Lab G1 MindYourStep policy
 # (G1MindYourStepFlatEnvCfg / g1_mind_your_step).
 #
-# ONNX under <policy_dir>/exported/ (obs [1, 58] -> actions [1, 12]).
-# Matches mys_env_cfg.ObservationsCfg.PolicyCfg and LowerJointPositionActionCfg.
+# ONNX under <policy_dir>/exported/ (obs [1, 109] -> actions [1, 29]).
+# Matches mys_env_cfg.ObservationsCfg.PolicyCfg and LowerJointPositionActionCfg
+# (joint_names=ALL_JOINTS, upper_joint_names=None -> the policy drives all 29 DoF).
 policy_file: policy.onnx
 
-# --- lower body (action manager), SDK 0..11 ---
-joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+# --- whole body (action manager), SDK 0..28 ---
+# ALL_JOINTS in mys_env_cfg is LEG_JOINTS + UPPER_JOINTS, which maps 1:1 onto SDK 0..28.
+joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+                12, 13, 14,
+                15, 16, 17, 18, 19, 20, 21,
+                22, 23, 24, 25, 26, 27, 28]
 # sim.dt 0.005 * decimation 4
 step_dt: 0.02
+# G1_29DOF_custom_CFG actuators: hips 100/2, knee 150/4, ankles 40/2,
+# waist 600/5, shoulders+elbows+wrists 40/1.
 stiffness: [100.0, 100.0, 100.0, 150.0, 40.0, 40.0,
-            100.0, 100.0, 100.0, 150.0, 40.0, 40.0]
+            100.0, 100.0, 100.0, 150.0, 40.0, 40.0,
+            600.0, 600.0, 600.0,
+            40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0,
+            40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
 damping: [2.0, 2.0, 2.0, 4.0, 2.0, 2.0,
-          2.0, 2.0, 2.0, 4.0, 2.0, 2.0]
+          2.0, 2.0, 2.0, 4.0, 2.0, 2.0,
+          5.0, 5.0, 5.0,
+          1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+          1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 # G1_29DOF_custom_CFG / G1_29DOF_JOINT_CFG
 default_joint_pos: [-0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
-                    -0.2, 0.0, 0.0, 0.5, -0.3, 0.0]
-
-# --- upper body (held at default by State_MindYourStep), SDK 12..28 ---
-upper_body:
-  joint_ids_map: [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
-  default_joint_pos: [0.0, 0.0, 0.0,
-                      0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
-                      0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
-  stiffness: [600.0, 600.0, 600.0,
-              40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0,
-              40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
-  damping: [5.0, 5.0, 5.0,
-            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                    -0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
+                    0.0, 0.0, 0.0,
+                    0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
+                    0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
 
 actions:
   LowerJointPositionAction:
     joint_ids: null
-    clip: null
-    scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    # NOTE on clip semantics: this controller clamps the *processed* target
+    # (raw * scale + offset), whereas training clips the *raw* action to +-1 and
+    # then clamps the processed target to the hard joint limits
+    # (LowerJointPositionActionCfg.clip = +-1, clip_to_joint_limits = True).
+    # The equivalent processed-space box is therefore
+    #     [max(offset - 1, jnt_lower), min(offset + 1, jnt_upper)]
+    # with jnt_* taken from config/urdf/g1_29dof.urdf.
+    clip: [[-1.2000, 0.8000], [-0.5236, 1.0000], [-1.0000, 1.0000], [-0.0873, 1.5000], [-0.8727, 0.5236], [-0.2618, 0.2618],
+           [-1.2000, 0.8000], [-1.0000, 0.5236], [-1.0000, 1.0000], [-0.0873, 1.5000], [-0.8727, 0.5236], [-0.2618, 0.2618],
+           [-1.0000, 1.0000], [-0.5200, 0.5200], [-0.5200, 0.5200],
+           [-0.9000, 1.1000], [-0.8000, 1.2000], [-1.0000, 1.0000], [0.1000, 2.0944], [-1.0000, 1.0000], [-1.0000, 1.0000], [-1.0000, 1.0000],
+           [-0.9000, 1.1000], [-1.2000, 0.8000], [-1.0000, 1.0000], [0.1000, 2.0944], [-1.0000, 1.0000], [-1.0000, 1.0000], [-1.0000, 1.0000]]
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
     offset: [-0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
-             -0.2, 0.0, 0.0, 0.5, -0.3, 0.0]
+             -0.2, 0.0, 0.0, 0.5, -0.3, 0.0,
+             0.0, 0.0, 0.0,
+             0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
+             0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
 
 # Observation order MUST match G1MindYourStepFlatEnvCfg.ObservationsCfg.PolicyCfg.
-# Dims: ang_vel(3) + grav(3) + q_rel(12) + qd(12) + last_proc_act(12) + foot_cmd(16) = 58.
+# Dims: ang_vel(3) + grav(3) + q_rel(29) + qd(29) + last_proc_act(29) + foot_cmd(16) = 109.
 observations:
   base_ang_vel:
     params: {}
     scale: null
     clip: null
-    history_length: 1
+    history_length: 5
   projected_gravity:
     params: {}
     scale: null
     clip: null
-    history_length: 1
+    history_length: 5
   joint_pos_ordered_rel:
     params: {}
     scale: null
     clip: null
-    history_length: 1
+    history_length: 5
   joint_vel_ordered:
     params: {}
     scale: null
     clip: null
-    history_length: 1
+    history_length: 5
   last_processed_action:
     params: {}
     scale: null
     clip: null
-    history_length: 1
+    history_length: 5
   mys_foot_command:
     params: {}
     scale: null
     clip: null
-    history_length: 1
+    history_length: 5
 
 # --- gait command (joystick teleop OR csv replay) ---
 # Generate the CSV from a Footstep plan with:
@@ -79,8 +99,10 @@ observations:
 #   python3 cmd/eval_footstep.py --mys
 gait:
   feet_distance: 0.2     # [m] nominal lateral stance width (joystick still mode)
-  # half-step duration = 0.5 / f. Use 0.5 Hz so one foothold ≈ 1.0 s
-  # (matches typical footcommands ssp_t + 2*dsp_t = 1.0 s).
+  # Must match MindYourStepFootCommandCfg.gait_frequency_range in training (1.0).
+  # gait_process advances by step_dt * f, so a full cycle is 1/f = 1.0 s and each
+  # foothold (half cycle) takes 0.5 s. Changing this desynchronizes the policy
+  # from the gait clock it was trained on.
   gait_frequency: 1.0
   stop_steps: 4          # joystick: half-steps to settle before standing still
   vert_max: 0.5          # [m] joystick full stick forward/backward
@@ -91,6 +113,9 @@ gait:
   # command_source: joystick | csv
   command_source: csv
   # Local per-step commands (same schema as footcommands.csv). Relative to proj dir.
+  # NOTE: the ssp_t/dsp_t columns are carried into the eval log only -- MindYourStep
+  # always walks at gait_frequency above, so a plan authored for 1.0 s footholds is
+  # replayed at 0.5 s per foothold.
   csv_path: config/footcommands_mys.csv
   # Per-step landing error log template (same schema as footstep_eval.csv).
   # On enter a timestamped file is created, e.g. log/footstep_eval_mys_260804_162830.csv.

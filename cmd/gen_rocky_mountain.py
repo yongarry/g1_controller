@@ -570,7 +570,7 @@ if __name__ == "__main__":
                    metavar=("W0", "W1"),
                    help="distance from the footstep path: full height inside W0, "
                         "tapered to ground at W1 [m]")
-    t.add_argument("--terrain-margin", type=float, default=0.8,
+    t.add_argument("--terrain-margin", type=float, default=10.8,
                    help="extent of the terrain grid beyond the footstep bounding box [m]")
     t.add_argument("--idw-power", type=float, default=2.0,
                    help="inverse-distance-weighting exponent for the surface")

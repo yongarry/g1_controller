@@ -2,11 +2,14 @@
 // All rights reserved.
 //
 // FSM state that deploys the Isaac Lab G1 MindYourStep policy
-// (G1MindYourStepFlatEnvCfg). Lower-body 12-DoF actions come from the ONNX
-// actor; the upper body is held at default (mirroring LowerJointPositionAction
-// in training). The 16-D foot-placement goal is produced on-device by
-// MysGaitCommand (joystick or CSV replay); State_MindYourStep::command is a
-// static pointer so the command-backed observation term can read it.
+// (G1MindYourStepFlatEnvCfg). All joints listed in deploy.yaml's joint_ids_map are
+// driven by the ONNX actor -- with the current config that is the whole 29-DoF body,
+// matching LowerJointPositionActionCfg(joint_names=ALL_JOINTS, upper_joint_names=None)
+// in training. The optional `upper_body` block holds extra joints at a fixed default
+// instead (used by the older lower-body-only checkpoints). The 16-D foot-placement goal
+// is produced on-device by MysGaitCommand (joystick or CSV replay);
+// State_MindYourStep::command is a static pointer so the command-backed observation
+// term can read it.
 
 #pragma once
 

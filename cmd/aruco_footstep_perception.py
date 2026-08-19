@@ -508,9 +508,9 @@ def main():
     p.add_argument("--domain", type=int, default=0, help="DDS domain id")
     p.add_argument("--source", default=None, choices=[None, "sim", "realsense"])
     p.add_argument("--show", action="store_true", help="debug window")
-    p.add_argument("--rate", type=float, default=0.0,
-                   help="max publish rate [Hz]; 0 = pace with the camera "
-                        "(recommended on the robot; old default 15 capped USB3)")
+    p.add_argument("--rate", type=float, default=None,
+                   help="max publish rate [Hz]; default = vision.camera.fps "
+                        "from deploy.yaml; 0 = uncapped")
     p.add_argument("--exposure-us", type=float, default=None,
                    help="fixed color exposure [us]; 0 = auto "
                         "(overrides vision.camera.exposure_us)")
@@ -575,17 +575,19 @@ def main():
     pub = ChannelPublisher(topic, String_)
     pub.Init()
 
-    # 0 => no artificial sleep (wait_for_frames already paces realsense).
-    # Positive rate only caps CPU when the camera is faster than we need.
-    period = (1.0 / args.rate) if args.rate > 0.0 else 0.0
-    if period > 0.0:
-        print(f"[perception] publish capped at {args.rate:.1f} Hz")
+    # Default: vision.camera.fps (sim has no hardware clock, so this is the
+    # only pace). --rate 0 disables the sleep; RealSense wait_for_frames still
+    # blocks at the stream rate.
+    if args.rate is None:
+        rate = float(fps)
     else:
-        stream_fps = getattr(cam, "stream_fps", None)
-        if stream_fps:
-            print(f"[perception] publish paced by camera (~{stream_fps:.0f} Hz)")
-        else:
-            print("[perception] publish uncapped (camera/render paced)")
+        rate = float(args.rate)
+    period = (1.0 / rate) if rate > 0.0 else 0.0
+    if period > 0.0:
+        src = "--rate" if args.rate is not None else "vision.camera.fps"
+        print(f"[perception] publish capped at {rate:.1f} Hz ({src})")
+    else:
+        print("[perception] publish uncapped")
 
     n_pub = 0
     t_last_log = time.time()

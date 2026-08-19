@@ -85,7 +85,7 @@ State_MindYourStep::State_MindYourStep(int state_mode, std::string state_string)
     {
         std::filesystem::path csv = (g && g["csv_path"])
             ? g["csv_path"].as<std::string>()
-            : std::string("config/footstepcommands_mys.csv");
+            : std::string("config/footcommands_mys.csv");
         if (csv.is_relative()) csv = param::proj_dir / csv;
         gait_->load_csv(csv.string());
     }
@@ -160,7 +160,10 @@ State_MindYourStep::State_MindYourStep(int state_mode, std::string state_string)
         }
     }
 
-    spdlog::info("[MindYourStep] obs~58 / act=12; command_source={}; gait_freq={:.2f} Hz",
+    spdlog::info("[MindYourStep] joints={} / act={} ({} held at default); "
+                 "command_source={}; gait_freq={:.2f} Hz",
+                 env->robot->data.joint_ids_map.size(),
+                 env->action_manager->total_action_dim(), upper_ids_.size(),
                  gait_->csv_mode() ? "csv" : "joystick", gcfg.gait_frequency);
 
     this->registered_checks.emplace_back(

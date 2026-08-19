@@ -9,8 +9,12 @@
 //     gait_info(2) ]
 //
 // Joystick mode follows the original mind-your-step deploy GaitGenerator.
-// CSV mode replays per-step local footholds from footstepcommands_mys.csv
+// CSV mode replays per-step local footholds from footcommands_mys.csv
 // (same semantics as footcommands.csv: step_* in the stance-foot yaw frame).
+// NOTE: step_yaw is a per-step increment relative to the current stance foot, so a
+// converted Footstep plan can accumulate into a continuous turn. The training goal
+// sampler instead measures every yaw target back to a global heading (theta_feet), so
+// its relative command never accumulates -- see cmd/convert2mys.py --heading.
 
 #pragma once
 
@@ -323,25 +327,18 @@ private:
         }
     }
 
+    // Hold-still goal, matching the steady-still override of the training env
+    // (MindYourStepFootCommand::_update_obs_buffer): the SWING foot is commanded to the
+    // nominal stance width and the STANCE foot keeps a zero offset -- it is the origin of
+    // the frame the goal is expressed in. Commanding the stance foot +-feet_distance from
+    // itself is an input the policy never sees during training.
     Offsets still_offsets_() const
     {
         Offsets o{kZero, kZero, kIdentity, kIdentity};
         const std::array<float, 3> l{0.0f, cfg_.feet_distance, 0.0f};
         const std::array<float, 3> r{0.0f, -cfg_.feet_distance, 0.0f};
-        if (csv_mode_)
-        {
-            // After the plan (or between scripted steps we always overwrite),
-            // hold both feet at the nominal width.
-            o.lp = l;
-            o.rp = r;
-            return o;
-        }
-        if (gaits_to_still_ > 0)
-        {
-            o.lp = (swing_foot_idx_ == 0) ? l : kZero;
-            o.rp = (swing_foot_idx_ == 1) ? r : kZero;
-        }
-        else { o.lp = l; o.rp = r; }
+        o.lp = (swing_foot_idx_ == 0) ? l : kZero;
+        o.rp = (swing_foot_idx_ == 1) ? r : kZero;
         return o;
     }
 

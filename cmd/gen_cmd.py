@@ -27,13 +27,28 @@ _PROJ_DIR = os.path.dirname(_THIS_DIR)
 DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 
 # Trained command ranges (must match footstep deploy.yaml `footstep.ranges`).
-RANGE_X = (-0.3, 0.4)     # forward step length [m]
-# RANGE_Y = (0.237, 0.237)      # lateral step width (positive magnitude) [m]
+# 01. 2d random footstep sampling
+# RANGE_X = (-0.3, 0.4)     # forward step length [m]
+# RANGE_Y = (0.2, 0.4)      # lateral step width (positive magnitude) [m]
+# RANGE_Z = (0.0, 0.0)   # per-step height change [m]
+# RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
+# NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
+
+# # 02. 3d random footstep sampling 
+# RANGE_X = (0.2, 0.4)     # forward step length [m]
+# RANGE_Y = (0.2, 0.4)      # lateral step width (positive magnitude) [m]
+# RANGE_Z = (-0.15, 0.2)   # per-step height change [m]
+# RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
+# NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
+
+# 03. 3d random visual footstep sampling 
+RANGE_X = (0.2, 0.4)     # forward step length [m]
 RANGE_Y = (0.2, 0.4)      # lateral step width (positive magnitude) [m]
-RANGE_Z = (0.0, 0.0)   # per-step height change [m]
+RANGE_Z = (-0.1, 0.15)   # per-step height change [m]
 RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
+# 05. real robot stair experiment
 # Fixed per-step z scene (uncomment to use). Length must equal `step` (incl. stop).
 # x/y/yaw still come from --x/--y/--yaw (or RANGE_*). Example 10-step climb:
 # SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.00, -0.15, -0.15, -0.15, -0.158,  0.0, 0.0]
@@ -94,8 +109,8 @@ if __name__ == "__main__":
                    metavar=("MIN", "MAX"), help="step_z range [m]")
     p.add_argument("--yaw", nargs=2, type=float, default=list(RANGE_YAW),
                    metavar=("MIN", "MAX"), help="step_yaw range [rad]")
-    p.add_argument("--ssp", type=float, default=0.8, help="single support time [s]")
-    p.add_argument("--dsp", type=float, default=0.1, help="double support time [s]")
+    p.add_argument("--ssp", type=float, default=0.7, help="single support time [s]")
+    p.add_argument("--dsp", type=float, default=0.15, help="double support time [s]")
     p.add_argument("--height", type=float, default=0.1, help="swing apex height [m]")
     p.add_argument("--no-stop", action="store_true",
                    help="do not force the last step to be a stop step")
@@ -105,8 +120,9 @@ if __name__ == "__main__":
 
     if args.step <= 0:
         raise ValueError("step must be a positive integer")
-    if args.seed is not None:
-        random.seed(args.seed)
+    if args.seed is None:
+        args.seed = int.from_bytes(os.urandom(4), "little")
+    random.seed(args.seed)
 
     rows = build_rows(args.step, args.start, args.x, args.y, args.z, args.yaw,
                       args.ssp, args.dsp, args.height, stop_last=not args.no_stop,
@@ -119,7 +135,7 @@ if __name__ == "__main__":
         w.writerows(rows)
 
     print(f"Wrote {len(rows)} footsteps to {args.output} "
-          f"(start={args.start}, x={tuple(args.x)}, y={tuple(args.y)}, "
+          f"(seed={args.seed}, start={args.start}, x={tuple(args.x)}, y={tuple(args.y)}, "
           f"z={tuple(args.z)}, yaw={tuple(args.yaw)})")
     
     # execute convert_footcommand_2_global.py to generate footcommands_global.csv
@@ -130,4 +146,8 @@ if __name__ == "__main__":
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert2mys.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
-    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
+
+
+# good seed mountain
+#     3609553359

@@ -1,14 +1,13 @@
-# Footstep deploy override (ablation: foot_commands_3d without com_z).
+# Footstep deploy override (full observation set (ik target + foot_commands_3d_w_comz)).
 # Shared settings live in ../../deploy_base.yaml — edit that for common changes.
 extends: ../../deploy_base.yaml
 
-# policy_file: 260728_1011_2d_lcp.onnx
-policy_file: 260801_2338_2d.onnx
-# policy_file: 260803_2253_2d_hgain_rew.onnx
+# policy_file: 260813_1138_2d_heuri1.onnx
+policy_file: 260813_1139_2d_heuri2.onnx
 
-# policy_file: 260729_0044_3d_lcp.onnx #<---------unstable
-# policy_file: 260802_0625_3d.onnx
-
+# Optional per-ablation overrides (deep-merged into deploy_base.yaml):
+footstep:
+  com_generate_type: heuri2   # prev | heuri | heuri2
 
 # The whole group uses history_length=10, skip_history_tick=2 (history-major).
 observations:
@@ -49,7 +48,7 @@ observations:
     clip: null
     history_length: 10
     skip_history_tick: 2
-  foot_commands_3d:
+  foot_commands_3d_w_comz:
     params: {}
     scale: null
     clip: null

@@ -86,7 +86,7 @@ footstep:
   #   fk_odometry - FK landing accumulation (default, hardware)
   #   sim_odom    - MuJoCo: rt/odommodestate base + FK foot offset
   #   mujoco      - MuJoCo: ankle-roll body xpos/yaw (odom.foot_position_body)
-  foot_state_source: sim_odom  # fk_odometry | sim_odom | mujoco
+  foot_state_source: fk_odometry  # fk_odometry | sim_odom | mujoco
   sim_odom_topic: rt/odommodestate
 
   # Foot-command source:
@@ -101,7 +101,7 @@ footstep:
   #                  seen, then walks the two nearest feasible targets.
   #   "goal"       - walk to the world-frame goal points listed under `goal:`
   #                  below, one after another (see that section).
-  command_source: csv # joystick | csv | csv_global | vision | goal
+  command_source: vision # joystick | csv | csv_global | vision | goal
   csv_path: config/footcommands.csv
   global_csv_path: config/footcommands_global.csv
 
@@ -178,7 +178,7 @@ footstep:
     step_x_max: 0.25       # [m] nominal (max) forward step
     step_y: 0.2           # [m] nominal lateral step width
     step_yaw_max: 0.4     # [rad] nominal (max) per-step turn
-    ssp_t: 0.6            # [s] single support time
+    ssp_t: 0.8            # [s] single support time
     dsp_t: 0.1           # [s] double support time
     height: 0.08          # [m] swing apex height
     reach_radius: 0.1    # [m] a goal this close counts as reached
@@ -226,8 +226,10 @@ footstep:
       # actually supports and falls back automatically (same resolution at a
       # lower fps first, e.g. 1280x720@10 - low fps is fine, the planner only
       # samples once per step). Set 640x480 here to prefer 30 fps on USB 2.
-      width: 424         # 3cm markers need 720p to detect beyond ~1m
-      height: 240
+      # width: 424         # 3cm markers need 720p to detect beyond ~1m
+      # height: 240
+      width: 640
+      height: 480
       fps: 60              # D435 on USB2 only supports 720p up to 15 fps; use USB3
       # Fixed color exposure [us] (realsense source only). Auto-exposure aims
       # for brightness, not sharpness: indoors it settles near 16 ms, and the
