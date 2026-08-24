@@ -13,37 +13,22 @@
 #     step_yaw : swing-foot yaw RELATIVE to the current stance foot
 #
 # ---------------------------------------------------------------------------
-# Heading: why a Footstep plan is not automatically a MindYourStep plan
+# Heading
 # ---------------------------------------------------------------------------
-# The two policies command heading differently.
+# CSV mode in both controllers uses each row as a stance-frame command:
+#   step_yaw is THAT step's heading relative to the current stance foot.
+# It is not a running sum. The policy / Footstep planner sees only this
+# relative value. Summing the column ("accumulated heading" below) is only a
+# diagnostic of the path if every increment were tracked perfectly.
 #
-#   Footstep : step_yaw is a per-step INCREMENT. Successive rows accumulate, so
-#              a plan can describe a continuous turn (the shipped
-#              footcommands.csv accumulates to about -435 deg over 1000 steps,
-#              peaking near 640 deg).
-#
-#   MindYourStep : the goal sampler draws the foothold DIRECTION (theta_move)
-#              and the foot HEADING (theta_feet) as two independent globals that
-#              are constant for the whole episode, and every foot yaw target is
-#                   wrap(theta_feet + beta - stance_yaw),  beta ~ U(yaw_range)
-#              i.e. always measured back to the global heading. The relative yaw
-#              the policy sees therefore never accumulates: it oscillates around
-#              zero. With feet_direction_range = (0, 0) in the flat config,
-#              theta_feet is the spawn heading, so the trained behaviour is to
-#              keep the feet pointing one way and STRAFE, not to turn.
-#
-# The policy only ever observes the relative command, so a turning plan is not
-# rejected outright -- each individual step_yaw here stays inside the trained
-# range. But a sustained same-sign sequence produces a continuous turn that the
-# training distribution never generates. --heading controls what to do:
-#
-#   keep   (default) pass step_yaw through unchanged. The two controllers then
-#          execute the identical plan, which is what an A/B comparison needs.
-#          The accumulated heading is reported so the divergence is visible.
-#   anchor rewrite step_yaw so the feet hold the global heading, which is the
-#          MindYourStep training semantics. Under anchoring every swing foot
-#          lands at theta_feet, so the relative command collapses to ~0 and the
-#          plan becomes the strafe-equivalent of the original path.
+#   keep   (default) copy step_x / step_y / step_yaw through. Same command
+#          Footstep csv mode would run, except step_yaw is clipped to the
+#          trained yaw_range_deg +/-15 deg, and step_x keeps the first
+#          non-zero sign so consecutive forward/back flips are removed.
+#   anchor rewrite step_yaw so the feet hold a global heading. Training
+#          samples yaw back to theta_feet, so this is the strafing equivalent.
+#          Clipped to yaw_range afterwards.
+
 #
 # ---------------------------------------------------------------------------
 # Timing
@@ -75,15 +60,51 @@ DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands_mys.csv")
 
 OUT_COLS = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
 
-# MindYourStepFootCommandCfg of G1MindYourStepFlatEnvCfg (training envelope).
+# GoalDoubleFootPlacement in conf_g1.yaml (training envelope).
 TRAIN_D_MIN, TRAIN_D_MAX = 0.2, 0.5      # xy_distance_range
 TRAIN_FEET_DISTANCE = 0.2                # lateral leg-crossing clip
-TRAIN_YAW_ABS = math.pi / 6.0            # yaw_range (beta)
+TRAIN_YAW_ABS = math.radians(15.0)       # yaw_range_deg (beta)
 TRAIN_GAIT_FREQUENCY = 1.0               # gait_frequency_range
 
 
 def wrap_to_pi(a):
     return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def clip_yaw(rows, yaw_abs):
+    """Clamp step_yaw to the trained yaw_range_deg (+/-yaw_abs rad)."""
+    n = 0
+    for r in rows:
+        y = max(-yaw_abs, min(yaw_abs, wrap_to_pi(r["step_yaw"])))
+        if abs(y - r["step_yaw"]) > 1e-9:
+            n += 1
+        r["step_yaw"] = y
+    return n
+
+
+def same_x_sign(rows):
+    """Keep every non-zero step_x on the first non-zero step's sign.
+
+    Footstep samples RANGE_X across zero, so consecutive rows often flip
+    forward/back. Training holds movement_direction fixed inside a gait.
+    Magnitude is unchanged; only the sign is aligned. Zero (stop) rows stay 0.
+    """
+    sign = 0.0
+    for r in rows:
+        if abs(r["step_x"]) > 1e-9:
+            sign = 1.0 if r["step_x"] > 0.0 else -1.0
+            break
+    if sign == 0.0:
+        return 0
+    n = 0
+    for r in rows:
+        if abs(r["step_x"]) < 1e-9:
+            continue
+        new_x = sign * abs(r["step_x"])
+        if abs(new_x - r["step_x"]) > 1e-9:
+            n += 1
+        r["step_x"] = new_x
+    return n
 
 
 def read_rows(path):
@@ -136,7 +157,7 @@ def check_alternation(rows):
 
 
 def heading_profile(rows):
-    """Absolute stance-foot heading after each step (relative to the start)."""
+    """World heading if every per-step yaw were tracked (diagnostic only)."""
     psi, cum = 0.0, []
     for r in rows:
         psi += r["step_yaw"]
@@ -221,9 +242,8 @@ def main():
     p.add_argument("--output", "-o", default=DEFAULT_OUTPUT,
                    help="MindYourStep replay CSV")
     p.add_argument("--heading", choices=("keep", "anchor"), default="keep",
-                   help="keep: pass step_yaw through so both controllers run the same "
-                        "plan (default). anchor: rewrite step_yaw to hold a global "
-                        "heading, matching the MindYourStep training semantics.")
+                   help="keep: pass step_x/y/yaw through (default, same as Footstep csv). "
+                        "anchor: rewrite step_yaw to hold a global heading.")
     p.add_argument("--theta-feet", type=float, default=0.0,
                    help="[rad] global foot heading used by --heading anchor "
                         "(0 = the heading the robot starts on).")
@@ -233,6 +253,9 @@ def main():
                    help="[m] min trained step length (validation only)")
     p.add_argument("--d-max", type=float, default=TRAIN_D_MAX,
                    help="[m] max trained step length (validation only)")
+    p.add_argument("--allow-x-flip", action="store_false",
+                   help="keep original step_x signs (consecutive forward/back flips). "
+                        "Default is to align all non-zero step_x to the first step's sign.")
     args = p.parse_args()
 
     rows = read_rows(args.input)
@@ -243,10 +266,13 @@ def main():
 
     if args.heading == "anchor":
         changed = anchor_heading(rows, args.theta_feet)
-        cum_after = heading_profile(rows)
-        net_after, peak_after = cum_after[-1], max(abs(c) for c in cum_after)
     else:
-        changed, net_after, peak_after = 0, net_before, peak_before
+        changed = 0
+
+    n_clip = clip_yaw(rows, TRAIN_YAW_ABS)
+    n_x = 0 if args.allow_x_flip else same_x_sign(rows)
+    cum_after = heading_profile(rows)
+    net_after, peak_after = cum_after[-1], max(abs(c) for c in cum_after)
 
     n_bad = validate(rows, args.feet_distance, args.d_min, args.d_max, TRAIN_YAW_ABS)
     write_rows(args.output, rows)
@@ -257,21 +283,25 @@ def main():
     print(f"[convert2mys] {len(rows)} steps: {args.input}")
     print(f"              -> {args.output}")
     print(f"              first foot={rows[0]['foot']}, heading mode={args.heading}"
-          + (f" (rewrote {changed} step_yaw values)" if changed else ""))
+          + (f" (rewrote {changed} step_yaw values)" if changed else "")
+          + (f", clipped {n_clip} to +/-{math.degrees(TRAIN_YAW_ABS):.0f} deg" if n_clip else "")
+          + (f", aligned {n_x} step_x signs" if n_x else ""))
     print(f"              accumulated heading: net {math.degrees(net_before):+.1f} deg, "
           f"peak |{math.degrees(peak_before):.1f}| deg"
           + (f"  ->  net {math.degrees(net_after):+.1f} deg, "
-             f"peak |{math.degrees(peak_after):.1f}| deg" if args.heading == "anchor" else ""))
+             f"peak |{math.degrees(peak_after):.1f}| deg"
+             if n_clip or args.heading == "anchor" else ""))
     print(f"              timing: source plan {t0:.3f} s/step, MindYourStep replays at "
           f"{mys_step_t:.3f} s/step (gait.gait_frequency must stay "
           f"{TRAIN_GAIT_FREQUENCY:.1f} to match training)")
+    yaws = [r["step_yaw"] for r in rows]
+    print(f"              per-step yaw: [{min(yaws):+.3f}, {max(yaws):+.3f}] rad "
+          f"([{math.degrees(min(yaws)):+.1f}, {math.degrees(max(yaws)):+.1f}] deg)")
     if args.heading == "keep" and abs(net_before) > math.pi:
-        print(f"[warn] the plan turns {math.degrees(abs(net_before)):.0f} deg in total. "
-              f"MindYourStep anchors the foot heading to a global theta_feet and its "
-              f"relative yaw command never accumulates, so a sustained turn is outside "
-              f"the training distribution. Use --heading anchor for the "
-              f"training-consistent (strafing) equivalent, or widen "
-              f"feet_direction_range when training.", file=sys.stderr)
+        print(f"[note] summing the yaw column is {math.degrees(abs(net_before)):.0f} deg "
+              f"(path heading if every increment is tracked). Each command is still "
+              f"just that row's step_yaw vs current stance, same as Footstep csv.",
+              file=sys.stderr)
     if n_bad:
         print(f"[warn] {n_bad} envelope violation(s) above; the policy may track those "
               f"steps poorly.", file=sys.stderr)

@@ -29,6 +29,7 @@
 #   python3 cmd/gen_aruco_footstep_scene.py --marker-size 0.03 --marker-spread 0.05
 #   python3 cmd/gen_aruco_footstep_scene.py --shape box --size 0.1 0.08
 #   python3 cmd/gen_aruco_footstep_scene.py --shape box --size 0.1 0.08 0.02
+#   python3 cmd/gen_aruco_footstep_scene.py --stair
 
 import argparse
 import io
@@ -131,7 +132,7 @@ def build_marker_geoms(stones, marker_size, marker_spread, tex_scale):
                 f'pos="{gx:.4f} {gy:.4f} {gz:.4f}" '
                 f'quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" '
                 f'material="aruco_m{mid:03d}" '
-                f'contype="0" conaffinity="0" group="1"/>')
+                f'contype="0" conaffinity="0" group="4"/>')
     return "\n".join(lines)
 
 
@@ -262,8 +263,8 @@ if __name__ == "__main__":
     p.add_argument("--xml", default=DEFAULT_XML)
     p.add_argument("--board", default=DEFAULT_BOARD,
                    help="output board metadata JSON (read by the perception node)")
-    p.add_argument("--shape", choices=["box", "cylinder"], default="cylinder")
-    p.add_argument("--size", nargs="+", type=float, default=[0.125, 0.06],
+    p.add_argument("--shape", choices=["box", "cylinder"], default="box")
+    p.add_argument("--size", nargs="+", type=float, default=[0.125, 0.08],
                    metavar="H",
                    help="HX HY [HZ]: box half-extents [m] (cylinder: radius=HX). "
                         "If HZ given, vertical half-size is fixed (top at pos_z); "
@@ -280,12 +281,17 @@ if __name__ == "__main__":
     p.add_argument("--offset-z", type=float, default=0.0,
                    help="stone/ArUco top height offset in world-up [m]")
     p.add_argument("--center", action="store_true")
+    p.add_argument("--stair", action="store_true",
+                   help="place stepping-stone cubes at world y=0 so left/right "
+                        "treads share a lateral line; ArUco and foot-target "
+                        "spheres stay on the CSV landings")
     # marker parameters
-    # p.add_argument("--marker-size", type=float, default=ac.DEFAULT_MARKER_SIZE,
-    p.add_argument("--marker-size", type=float, default=0.06,
+    p.add_argument("--marker-size", type=float, default=ac.DEFAULT_MARKER_SIZE,
+    # p.add_argument("--marker-size", type=float, default=0.06,
                    help="black-border side length [m] (default 0.06 = 6 cm; "
                         "PDF is always 1 sheet per A4, large sheets may clip)")
-    p.add_argument("--marker-spread", type=float, default=0.05,
+    # p.add_argument("--marker-spread", type=float, default=ac.DEFAULT_MARKER_SPREAD,
+    p.add_argument("--marker-spread", type=float, default=0.03,
                    help="|x|=|y| offset of the 4 marker centers [m]")
     p.add_argument("--dict-bits", type=int, default=ac.DEFAULT_DICT_BITS,
                    help="marker bit-grid size (default 4 -> standard DICT_4X4; "
@@ -309,33 +315,35 @@ if __name__ == "__main__":
     dictionary = ac.make_dictionary(args.dict_bits, dict_size, args.dict_seed)
 
     off = (args.offset_x, args.offset_y, args.offset_z)
-    # Same recenter + yaw-frame stone poses as build_footsteps (spheres=CSV).
+    # Cubes may collapse to y=0 (--stair); ArUco stay on the CSV landings
+    # (same XY as the red/blue spheres, plus yaw-frame --offset-*).
     work = prepare_rows(rows, center_y=args.center)
-    stones = stone_landing_poses(work, off)
+    aruco_poses = stone_landing_poses(work, off, stair=False)
 
     # 1) footstep pillar/platform/ground + CSV spheres
     geom_block, z_ground, z_min = build_footsteps(
         rows, args.shape, args.size, off, center_y=args.center,
         plane_margin=args.plane_margin,
         platform_size=tuple(args.platform_size),
-        platform_top=args.platform_top)
+        platform_top=args.platform_top,
+        stair=args.stair)
 
-    # 2) ArUco textures + geoms on stone tops (offset landings)
+    # 2) ArUco textures + geoms on the original landings (not stair y=0)
     xml_dir = os.path.dirname(os.path.abspath(args.xml))
     tex_dir = os.path.join(xml_dir, "aruco_markers")
     tex_scale = write_marker_textures(dictionary, n_targets, tex_dir,
                                       args.quiet_modules, args.dict_bits)
-    marker_geoms = build_marker_geoms(stones, args.marker_size,
+    marker_geoms = build_marker_geoms(aruco_poses, args.marker_size,
                                       args.marker_spread, tex_scale)
     geom_block = geom_block.replace(f"\n    {END_MARK}",
                                     f"\n{marker_geoms}\n    {END_MARK}")
     asset_block = build_marker_assets(n_markers, "aruco_markers")
 
-    # 3) board metadata = stone top-surface center (where ArUco actually sit)
+    # 3) board metadata = ArUco top-surface centers
     targets_meta = [
         {"index": i, "foot": s["foot"],
          "world": {"x": s["sx"], "y": s["sy"], "z": s["sz"], "yaw": s["yaw"]}}
-        for i, s in enumerate(stones)
+        for i, s in enumerate(aruco_poses)
     ]
     ac.save_board(args.board, targets_meta, args.dict_bits, dict_size,
                   args.dict_seed, args.marker_size, args.marker_spread,
@@ -363,7 +371,8 @@ if __name__ == "__main__":
                         args.dict_bits, args.dpi)
 
     print(f"Wrote {n_targets} {args.shape} footstep targets + {n_markers} "
-          f"ArUco markers into {args.xml}")
+          f"ArUco markers into {args.xml}"
+          f"{' (stair: cube y=0, ArUco on CSV)' if args.stair else ''}")
     print(f"  textures/sheets : {tex_dir}")
     if pdf_path:
         print(f"  print PDF       : {pdf_path}")

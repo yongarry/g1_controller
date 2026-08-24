@@ -374,7 +374,7 @@ def build_rock_cells(stones, args, z_ground):
         if args.rock_shape == "cylinder":
             # rotationally symmetric about z, so a yaw quat would be a no-op
             lines.append(
-                f'    <geom name="rock_{n_cells:04d}" type="cylinder" '
+                f'    <geom name="rock_{n_cells:04d}" type="cylinder" group="4" '
                 f'size="{half:.4f} {hz:.4f}" '
                 f'pos="{cx:.4f} {cy:.4f} {zc:.4f}" {rgba}/>'
             )
@@ -383,7 +383,7 @@ def build_rock_cells(stones, args, z_ground):
             yaw = (cell_hash(i, j, args.seed, salt=1.0) - 0.5) * 2.0 * args.max_cell_yaw
             qw, qx, qy, qz = yaw_to_quat(yaw)
             lines.append(
-                f'    <geom name="rock_{n_cells:04d}" type="box" '
+                f'    <geom name="rock_{n_cells:04d}" type="box" group="4" '
                 f'size="{half:.4f} {half:.4f} {hz:.4f}" '
                 f'pos="{cx:.4f} {cy:.4f} {zc:.4f}" '
                 f'quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" {rgba}/>'
@@ -421,7 +421,7 @@ def build_scene(rows, off, args):
     plat_hx, plat_hy = args.platform_size
 
     lines = [
-        f'    <geom name="start_platform" type="box" '
+        f'    <geom name="start_platform" type="box" group="3"'
         f'size="{plat_hx:.4f} {plat_hy:.4f} {plat_hz:.4f}" '
         f'pos="0 0 {plat_zc:.4f}" '
         f'rgba="{COLOR_PLATFORM}"/>',
@@ -453,14 +453,14 @@ def build_scene(rows, off, args):
         if args.stone_shape == "cylinder":
             # round pillar: HX is the radius, HY is unused, yaw has no effect
             lines.append(
-                f'    <geom name="stone_{i:02d}" type="cylinder" group="1" '
+                f'    <geom name="stone_{i:02d}" type="cylinder" group="3" '
                 f'size="{hx:.4f} {hz:.4f}" '
                 f'pos="{x:.4f} {y:.4f} {zc:.4f}" {rgba}/>'
             )
         else:
             qw, qx, qy, qz = yaw_to_quat(s["yaw"])
             lines.append(
-                f'    <geom name="stone_{i:02d}" type="box" group="1" '
+                f'    <geom name="stone_{i:02d}" type="box" group="3" '
                 f'size="{hx:.4f} {hy:.4f} {hz:.4f}" '
                 f'pos="{x:.4f} {y:.4f} {zc:.4f}" '
                 f'quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" {rgba}/>'
@@ -570,7 +570,7 @@ if __name__ == "__main__":
                    metavar=("W0", "W1"),
                    help="distance from the footstep path: full height inside W0, "
                         "tapered to ground at W1 [m]")
-    t.add_argument("--terrain-margin", type=float, default=10.8,
+    t.add_argument("--terrain-margin", type=float, default=1.8,
                    help="extent of the terrain grid beyond the footstep bounding box [m]")
     t.add_argument("--idw-power", type=float, default=2.0,
                    help="inverse-distance-weighting exponent for the surface")

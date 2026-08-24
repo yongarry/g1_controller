@@ -70,8 +70,8 @@ DEFAULT_BOARD = os.path.join(_PROJ_DIR, "config", "aruco_board.json")
 # COLOR_R = "0.80 0.30 0.30 1"  # right foot
 # COLOR_L = "0.30 0.45 0.80 1"  # left foot
 
-# COLOR_R = "0. 0.3 0.5 1"  # right foot
-COLOR_R = "0.45 0.28 0.12 1"  # right foot (brown)
+COLOR_R = "0.4 0.3 0.5 1"  # right foot
+# COLOR_R = "0.45 0.28 0.12 1"  # right foot (brown)
 COLOR_L = COLOR_R  # left foot
 COLOR_GROUND = "0.7 0.6 0.5 1"
 COLOR_PLATFORM = COLOR_R
@@ -129,15 +129,19 @@ def prepare_rows(rows, center_y=False):
     return work
 
 
-def stone_landing_poses(rows, off):
+def stone_landing_poses(rows, off, stair=False):
     """Stepping-stone landings: XY in each foot's yaw frame, Z world-up.
 
     Returns list of dicts: sx, sy, sz, yaw, foot (CSV x/y/z untouched).
+    If `stair`, stone world-y is forced to 0 so left/right treads stack on
+    the same lateral line (a staircase); spheres and ArUco still use CSV y.
     """
     ox, oy, oz = off
     out = []
     for r in rows:
         sx, sy = yaw_frame_offset(r["x"], r["y"], r["yaw"], ox, oy)
+        if stair:
+            sy = 0.0
         out.append({
             "sx": sx, "sy": sy, "sz": r["z"] + oz,
             "yaw": r["yaw"], "foot": r["foot"],
@@ -146,7 +150,8 @@ def stone_landing_poses(rows, off):
 
 
 def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
-                    platform_size, platform_top, marker_radius=DEFAULT_MARKER_RADIUS):
+                    platform_size, platform_top, marker_radius=DEFAULT_MARKER_RADIUS,
+                    stair=False):
     """Build spawn platform, ground plane, stepping geoms, and target spheres.
 
     size_xy: (HX, HY) or (HX, HY, HZ). HX/HY are horizontal half-extents [m]
@@ -156,6 +161,7 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
 
     Stones use yaw-frame XY offset from `off`; spheres stay on CSV targets.
     If center_y, both are recentered in world y first (same lateral shift).
+    If stair, stone world-y is 0 (cubes share a lateral line); spheres keep CSV y.
     """
     if len(size_xy) == 3:
         sx, sy, fixed_hz = size_xy
@@ -168,7 +174,7 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
     plat_hx, plat_hy = platform_size
 
     work = prepare_rows(rows, center_y)
-    stones = stone_landing_poses(work, off)
+    stones = stone_landing_poses(work, off, stair=stair)
     zs_top = [s["sz"] for s in stones]
     z_min = min(zs_top)
 
@@ -189,7 +195,7 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
     plane_hy = 0.5 * (max(ys) - min(ys)) + plane_margin
 
     lines = [
-        f'    <geom name="start_platform" type="box" group="6"'
+        f'    <geom name="start_platform" type="box" group="3"'
         f'size="{plat_hx:.4f} {plat_hy:.4f} {plat_hz:.4f}" '
         f'pos="0 0 {plat_zc:.4f}" '
         f'rgba="{COLOR_PLATFORM}"/>',
@@ -214,14 +220,14 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
         color = COLOR_R if s["foot"] == "R" else COLOR_L
         if shape == "cylinder":
             lines.append(
-                f'    <geom name="footstep_cyl_{i:02d}" type="cylinder" '
+                f'    <geom name="footstep_cyl_{i:02d}" type="cylinder" group="3"'
                 f'size="{radius:.4f} {hz:.4f}" '
                 f'pos="{x:.4f} {y:.4f} {zc:.4f}" '
                 f'rgba="{color}"/>'
             )
         else:
             lines.append(
-                f'    <geom name="footstep_box_{i:02d}" type="box" '
+                f'    <geom name="footstep_box_{i:02d}" type="box" group="3"'
                 f'size="{sx:.4f} {sy:.4f} {hz:.4f}" '
                 f'pos="{x:.4f} {y:.4f} {zc:.4f}" '
                 f'quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" '
@@ -305,8 +311,8 @@ if __name__ == "__main__":
     p.add_argument("--xml", default=DEFAULT_XML, help="MuJoCo scene XML to edit")
     p.add_argument("--shape", choices=["box", "cylinder"], default="box",
                    help="box: yaw-aligned rectangle (default); cylinder: round pillar")
-    p.add_argument("--size", nargs="+", type=float, default=[0.125, 10.06],
-    # p.add_argument("--size", nargs="+", type=float, default=[0.1, 0.1, 0.1],
+    p.add_argument("--size", nargs="+", type=float, default=[0.125, 0.06],
+    # p.add_argument("--size", nargs="+", type=float, default=[0.125, 0.07, 0.05],
                    metavar="H",
                    help="HX HY [HZ]: box half-extents [m] (cylinder: radius=HX, HY ignored). "
                         "If HZ given, vertical half-size is fixed (top at pos_z); "

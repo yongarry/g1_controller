@@ -166,6 +166,12 @@ class SimCamera:
         self.model.vis.global_.offwidth = max(self.model.vis.global_.offwidth, width)
         self.model.vis.global_.offheight = max(self.model.vis.global_.offheight, height)
         self.renderer = mujoco.Renderer(self.model, height, width)
+        # Default MjvOption only draws geom groups 0-2. Stepping stones are
+        # group 3 and ArUco markers are group 4, so both would be missing
+        # from the D435i image (the simulate UI groups do not apply here).
+        self.scene_option = mujoco.MjvOption()
+        for i in range(len(self.scene_option.geomgroup)-1):
+            self.scene_option.geomgroup[i] = 1
         fovy = math.radians(self.model.cam_fovy[self.cam_id])
         f = (height / 2.0) / math.tan(fovy / 2.0)
         self.K = np.array([[f, 0, width / 2.0],
@@ -180,7 +186,8 @@ class SimCamera:
         self.data.qpos[3:7] = s.quat
         self.data.qpos[7:7 + NUM_JOINTS] = q
         mujoco.mj_forward(self.model, self.data)
-        self.renderer.update_scene(self.data, camera="d435i")
+        self.renderer.update_scene(self.data, camera="d435i",
+                                   scene_option=self.scene_option)
         rgb = self.renderer.render()
         waist = [float(q[i]) for i in WAIST_IDS]
         return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), waist
@@ -421,43 +428,19 @@ class RealsenseCamera:
 # Detector + PnP
 # ---------------------------------------------------------------------------
 class TargetEstimator:
-    # detectMarkers dominates CPU; below this width run full-res, above it
-    # detect at half scale then subpix-refine corners on the full gray image.
-    DETECT_DOWNSCALE_MIN_WIDTH = 800
-    DETECT_SCALE = 0.5
-
     def __init__(self, board, min_markers=2):
         d = board["dictionary"]
         self.dictionary = ac.make_dictionary(d["bits"], d["size"], d["seed"])
         self.obj_points = ac.board_object_points(board)
+        # Always detect at full resolution. 3 cm markers at 1280x720 are
+        # already ~17 px (~3 px/module); a half-res pass drops them below
+        # the decoder's limit and yields zero targets.
         self.detector = cv2.aruco.ArucoDetector(self.dictionary,
                                                 ac.detector_parameters())
-        # Half-res pass: no per-corner SUBPIX inside detectMarkers.
-        self.detector_fast = cv2.aruco.ArucoDetector(
-            self.dictionary, ac.detector_parameters(fast=True))
         self.min_markers = int(min_markers)
-        self._term = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-                      20, 0.05)
 
     def _detect(self, gray):
         """Detect marker ids/corners in full-image coordinates."""
-        h, w = gray.shape[:2]
-        if w >= self.DETECT_DOWNSCALE_MIN_WIDTH:
-            scale = self.DETECT_SCALE
-            small = cv2.resize(gray, None, fx=scale, fy=scale,
-                               interpolation=cv2.INTER_AREA)
-            corners, ids, _ = self.detector_fast.detectMarkers(small)
-            if ids is None or len(ids) == 0:
-                return None, None
-            inv = 1.0 / scale
-            corners = [c * inv for c in corners]
-            # Subpixel on the full-res gray (detect was coarse / no refine).
-            flat = np.concatenate([c.reshape(-1, 2) for c in corners]).astype(
-                np.float32)
-            cv2.cornerSubPix(gray, flat, (5, 5), (-1, -1), self._term)
-            corners = [flat[i:i + 4].reshape(1, 4, 2)
-                       for i in range(0, len(flat), 4)]
-            return corners, ids
         return self.detector.detectMarkers(gray)[:2]
 
     def estimate(self, gray, K, dist, vis=None):

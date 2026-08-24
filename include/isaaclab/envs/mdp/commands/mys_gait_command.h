@@ -10,11 +10,9 @@
 //
 // Joystick mode follows the original mind-your-step deploy GaitGenerator.
 // CSV mode replays per-step local footholds from footcommands_mys.csv
-// (same semantics as footcommands.csv: step_* in the stance-foot yaw frame).
-// NOTE: step_yaw is a per-step increment relative to the current stance foot, so a
-// converted Footstep plan can accumulate into a continuous turn. The training goal
-// sampler instead measures every yaw target back to a global heading (theta_feet), so
-// its relative command never accumulates -- see cmd/convert2mys.py --heading.
+// with the same semantics as Footstep csv mode: step_* is in the current
+// stance-foot yaw frame. step_yaw is that row's relative heading, not a
+// running sum -- see cmd/convert2mys.py.
 
 #pragma once
 
@@ -114,25 +112,29 @@ public:
         step_counter_ = 0;
         step_completed_ = false;
         plan_done_ = false;
+        end_logged_ = false;
         has_active_ = false;
         set_offsets_(still_offsets_());
         cmd_[14] = 0.0f;
         cmd_[15] = 0.0f;
 
-        // Align the first half-step boundary with the CSV's first swing foot so
-        // the plan starts on the first policy tick (same as Footstep CSV).
+        // Park one tick before the half-cycle boundary that matches the CSV's
+        // first swing foot, so the first compute() samples at gp = 0.0 (left)
+        // or 0.5 (right) rather than 0.02 / 0.52.
         if (csv_mode_ && !steps_.empty())
         {
+            const double off = gp_off_();
             if (steps_.front().swing == 1) // right swings first
             {
-                gait_process_ = 0.5;
-                swing_foot_idx_ = 0; // first compute() crosses into right swing
+                gait_process_ = 0.5 - off;
+                swing_foot_idx_ = 0;
             }
             else
             {
-                gait_process_ = 0.0;
-                swing_foot_idx_ = 1; // first compute() crosses into left swing
+                gait_process_ = 0.0 - off;
+                swing_foot_idx_ = 1;
             }
+            if (gait_process_ < 0.0) gait_process_ += 1.0;
         }
     }
 
@@ -169,13 +171,18 @@ public:
             return;
         }
 
-        if (next_dir_ != move_dir_)
+        // Switch direction only on a half-cycle boundary so gait_info and the
+        // 14-D foot target jump together (training resamples at the same tick).
+        // Applying move_dir_ immediately used to spin gp_info mid-step while the
+        // offsets stayed on the previous command, which the policy never saw.
+        if (sample_goal && next_dir_ != move_dir_)
         {
             if (next_dir_ != Move::STILL) gaits_to_still_ = cfg_.stop_steps;
             move_dir_ = next_dir_;
         }
 
-        if (gaits_to_still_ > 0)
+        const bool gait_clock_on = (move_dir_ != Move::STILL) || (gaits_to_still_ > 0);
+        if (gait_clock_on)
         {
             const double a = 2.0 * M_PI * gait_process_;
             cmd_[14] = static_cast<float>(std::cos(a));
@@ -258,8 +265,77 @@ private:
 
     void compute_csv_(bool sample_goal, int completed_swing)
     {
-        const bool walking = !plan_done_ && (has_active_ || cursor_ < (int)steps_.size());
-        if (walking)
+        if (sample_goal)
+        {
+            // A previous scripted foothold just landed.
+            if (has_active_)
+            {
+                last_swing_ = active_swing_;
+                last_cmd_x_ = active_cmd_x_;
+                last_cmd_y_ = active_cmd_y_;
+                last_cmd_yaw_ = active_cmd_yaw_;
+                last_ssp_ = active_ssp_;
+                last_dsp_ = active_dsp_;
+                last_height_ = active_height_;
+                ++step_counter_;
+                step_completed_ = true;
+                has_active_ = false;
+                (void)completed_swing;
+            }
+
+            if (cursor_ < (int)steps_.size())
+            {
+                const StepCmd& s = steps_[cursor_];
+                if (s.swing != swing_foot_idx_)
+                {
+                    spdlog::warn("[MysGait/CSV] step {} foot mismatch (csv swing={}, gait swing={}); applying anyway",
+                                 cursor_ + 1, s.swing == 0 ? "L" : "R",
+                                 swing_foot_idx_ == 0 ? "L" : "R");
+                }
+                set_offsets_(offsets_from_step_(s));
+                active_swing_ = s.swing;
+                active_cmd_x_ = s.step_x;
+                active_cmd_y_ = signed_y_(s.swing, s.step_y);
+                active_cmd_yaw_ = s.step_yaw;
+                active_ssp_ = s.ssp_t;
+                active_dsp_ = s.dsp_t;
+                active_height_ = s.height;
+                has_active_ = true;
+                spdlog::info("[MysGait/CSV] step {}/{} (foot={}, x={:.3f} y={:.3f} yaw={:.3f})",
+                             cursor_ + 1, steps_.size(),
+                             s.swing == 0 ? "L" : "R",
+                             active_cmd_x_, active_cmd_y_, active_cmd_yaw_);
+                ++cursor_;
+            }
+            else
+            {
+                // Last foothold done: settle like joystick (swing-only still + gait
+                // clock) for stop_steps half-cycles, then fully-still both feet.
+                // Jumping straight to both-feet still with gp=[0,0] is an input
+                // the policy never sees at a walking→stand transition.
+                if (!plan_done_)
+                {
+                    plan_done_ = true;
+                    gaits_to_still_ = cfg_.stop_steps;
+                    if (!end_logged_)
+                    {
+                        end_logged_ = true;
+                        spdlog::info("[MysGait/CSV] plan complete after {} steps; settling {} half-steps.",
+                                     step_counter_, cfg_.stop_steps);
+                    }
+                }
+                set_offsets_(still_offsets_());
+                if (gaits_to_still_ > 0)
+                    gaits_to_still_ = std::max(0, gaits_to_still_ - 1);
+                if (gaits_to_still_ == 0)
+                    set_offsets_(still_offsets_()); // both feet, gp off below
+            }
+        }
+
+        // After the command for this tick is known, so gp_info cannot stay on
+        // for a frame of fully-still offsets (or off during an active step).
+        const bool gait_clock_on = has_active_ || (gaits_to_still_ > 0);
+        if (gait_clock_on)
         {
             const double a = 2.0 * M_PI * gait_process_;
             cmd_[14] = static_cast<float>(std::cos(a));
@@ -270,75 +346,31 @@ private:
             cmd_[14] = 0.0f;
             cmd_[15] = 0.0f;
         }
-
-        if (!sample_goal) return;
-
-        // A previous scripted foothold just landed.
-        if (has_active_)
-        {
-            last_swing_ = active_swing_;
-            last_cmd_x_ = active_cmd_x_;
-            last_cmd_y_ = active_cmd_y_;
-            last_cmd_yaw_ = active_cmd_yaw_;
-            last_ssp_ = active_ssp_;
-            last_dsp_ = active_dsp_;
-            last_height_ = active_height_;
-            ++step_counter_;
-            step_completed_ = true;
-            has_active_ = false;
-            (void)completed_swing;
-        }
-
-        if (cursor_ < (int)steps_.size())
-        {
-            const StepCmd& s = steps_[cursor_];
-            if (s.swing != swing_foot_idx_)
-            {
-                spdlog::warn("[MysGait/CSV] step {} foot mismatch (csv swing={}, gait swing={}); applying anyway",
-                             cursor_ + 1, s.swing == 0 ? "L" : "R",
-                             swing_foot_idx_ == 0 ? "L" : "R");
-            }
-            set_offsets_(offsets_from_step_(s));
-            active_swing_ = s.swing;
-            active_cmd_x_ = s.step_x;
-            active_cmd_y_ = signed_y_(s.swing, s.step_y);
-            active_cmd_yaw_ = s.step_yaw;
-            active_ssp_ = s.ssp_t;
-            active_dsp_ = s.dsp_t;
-            active_height_ = s.height;
-            has_active_ = true;
-            spdlog::info("[MysGait/CSV] step {}/{} (foot={}, x={:.3f} y={:.3f} yaw={:.3f})",
-                         cursor_ + 1, steps_.size(),
-                         s.swing == 0 ? "L" : "R",
-                         active_cmd_x_, active_cmd_y_, active_cmd_yaw_);
-            ++cursor_;
-        }
-        else
-        {
-            // Plan finished: settle into a still stance.
-            set_offsets_(still_offsets_());
-            plan_done_ = true;
-            if (!end_logged_)
-            {
-                end_logged_ = true;
-                spdlog::info("[MysGait/CSV] plan complete after {} steps; holding still.",
-                             step_counter_);
-            }
-        }
     }
 
-    // Hold-still goal, matching the steady-still override of the training env
-    // (MindYourStepFootCommand::_update_obs_buffer): the SWING foot is commanded to the
-    // nominal stance width and the STANCE foot keeps a zero offset -- it is the origin of
-    // the frame the goal is expressed in. Commanding the stance foot +-feet_distance from
-    // itself is an input the policy never sees during training.
+    // Hold-still goal.
+    // Settling (gaits_to_still > 0): swing foot at nominal stance width, stance at 0
+    //   -- same structure as a walking command, matches GaitGenerator._gen_still_cmd
+    //   while the gait clock is still running.
+    // Fully still: BOTH feet at +-feet_distance and gp_info = [0,0], matching
+    //   GoalDoubleFootPlacement's steady_still_flag (still_phase and num_gaits >= 2).
+    // The previous swing-only command in the fully-still case swapped which foot
+    // was non-zero every 0.5 s and produced a twitch at each hidden step boundary.
     Offsets still_offsets_() const
     {
         Offsets o{kZero, kZero, kIdentity, kIdentity};
         const std::array<float, 3> l{0.0f, cfg_.feet_distance, 0.0f};
         const std::array<float, 3> r{0.0f, -cfg_.feet_distance, 0.0f};
-        o.lp = (swing_foot_idx_ == 0) ? l : kZero;
-        o.rp = (swing_foot_idx_ == 1) ? r : kZero;
+        if (gaits_to_still_ > 0)
+        {
+            o.lp = (swing_foot_idx_ == 0) ? l : kZero;
+            o.rp = (swing_foot_idx_ == 1) ? r : kZero;
+        }
+        else
+        {
+            o.lp = l;
+            o.rp = r;
+        }
         return o;
     }
 

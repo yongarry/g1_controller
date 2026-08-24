@@ -34,17 +34,17 @@ DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 # RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
 # NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
-# # 02. 3d random footstep sampling 
+# 02. 3d random footstep sampling 
 # RANGE_X = (0.2, 0.4)     # forward step length [m]
 # RANGE_Y = (0.2, 0.4)      # lateral step width (positive magnitude) [m]
 # RANGE_Z = (-0.15, 0.2)   # per-step height change [m]
 # RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
 # NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
-# 03. 3d random visual footstep sampling 
-RANGE_X = (0.2, 0.4)     # forward step length [m]
-RANGE_Y = (0.2, 0.4)      # lateral step width (positive magnitude) [m]
-RANGE_Z = (-0.1, 0.15)   # per-step height change [m]
+# # 03. 3d random visual footstep sampling 
+RANGE_X = (0.25, 0.3)     # forward step length [m]
+RANGE_Y = (0.237, 0.3)      # lateral step width (positive magnitude) [m]
+RANGE_Z = (-0.1, 0.1)   # per-step height change [m]
 RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
@@ -53,8 +53,10 @@ NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 # x/y/yaw still come from --x/--y/--yaw (or RANGE_*). Example 10-step climb:
 # SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.00, -0.15, -0.15, -0.15, -0.158,  0.0, 0.0]
 # SCENE_X = [0.400, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0,  0.26,  0.26,  0.25,  0.25,  0.25, 0.0]
-SCENE_Z = None
-SCENE_X = None
+# SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.0, 0.0, 0.0, -0.15, -0.15, -0.15, -0.158,  0.0, 0.0]
+# SCENE_X = [0.4, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0]
+# SCENE_Z = None
+# SCENE_X = None
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
 
@@ -77,7 +79,7 @@ def build_rows(n, start, rx, ry, rz, ryaw, ssp, dsp, height, stop_last, scene_z=
             step_y = 0.237
             step_z = float(scene_z[i])
             step_yaw = 0.0
-        elif i == 0:
+        elif i == 0 and scene_z is None:
             step_x = 0.3
             step_y = 0.237
             step_z = 0.0
@@ -109,7 +111,7 @@ if __name__ == "__main__":
                    metavar=("MIN", "MAX"), help="step_z range [m]")
     p.add_argument("--yaw", nargs=2, type=float, default=list(RANGE_YAW),
                    metavar=("MIN", "MAX"), help="step_yaw range [rad]")
-    p.add_argument("--ssp", type=float, default=0.7, help="single support time [s]")
+    p.add_argument("--ssp", type=float, default=0.8, help="single support time [s]")
     p.add_argument("--dsp", type=float, default=0.15, help="double support time [s]")
     p.add_argument("--height", type=float, default=0.1, help="swing apex height [m]")
     p.add_argument("--no-stop", action="store_true",
@@ -144,9 +146,12 @@ if __name__ == "__main__":
 
     # execute gen_footstep_scene.py to generate footstep cubes in the MuJoCo scene XML
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert2mys.py")])
-    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
+
+
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py"),"--stair", "--size", "0.125", "0.5"])
 
 
 # good seed mountain

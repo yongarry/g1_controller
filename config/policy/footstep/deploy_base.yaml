@@ -69,7 +69,7 @@ footstep:
   com_generate_type: prev
   swing_up_timing: 0.2
   swing_down_timing: 0.6
-  ik_iters: 10
+  ik_iters: 5
   ik_lambda: 0.05
   ik_pos_tol: 0.0001
   urdf_path: config/urdf/g1_29dof.urdf
@@ -101,7 +101,7 @@ footstep:
   #                  seen, then walks the two nearest feasible targets.
   #   "goal"       - walk to the world-frame goal points listed under `goal:`
   #                  below, one after another (see that section).
-  command_source: vision # joystick | csv | csv_global | vision | goal
+  command_source: csv_global # joystick | csv | csv_global | vision | goal
   csv_path: config/footcommands.csv
   global_csv_path: config/footcommands_global.csv
 
@@ -126,7 +126,7 @@ footstep:
     foot_height: [0.05, 0.10]
   default_input:
     step_y: 0.237
-    ssp_t: 0.5
+    ssp_t: 0.7
     dsp_t: 0.1
     height: 0.08
     com_z: 0.0
@@ -220,7 +220,7 @@ footstep:
     min_markers: 2        # min detected markers per target for a PnP solve
     max_reproj_px: 2.0    # discard estimates with a larger mean reproj error
     camera:
-      source: realsense        # sim (offscreen MuJoCo render) | realsense (D435i)
+      source: sim        # sim (offscreen MuJoCo render) | realsense (D435i)
       # Requested color mode. On USB 2.x connections the D435i cannot stream
       # every mode; the node matches this against the modes the connection
       # actually supports and falls back automatically (same resolution at a
@@ -228,8 +228,8 @@ footstep:
       # samples once per step). Set 640x480 here to prefer 30 fps on USB 2.
       # width: 424         # 3cm markers need 720p to detect beyond ~1m
       # height: 240
-      width: 640
-      height: 480
+      width: 1280
+      height: 720
       fps: 60              # D435 on USB2 only supports 720p up to 15 fps; use USB3
       # Fixed color exposure [us] (realsense source only). Auto-exposure aims
       # for brightness, not sharpness: indoors it settles near 16 ms, and the

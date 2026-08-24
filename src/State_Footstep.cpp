@@ -571,7 +571,7 @@ void State_Footstep::write_log_row(const Eigen::VectorXf& q_meas)
 
 void State_Footstep::enter()
 {
-    walk_started_ = false; // stand still until the operator presses Y
+    walk_started_ = false; // joystick/goal: stand still until Y; vision auto-starts
     upper_pose_index_ = -1;
     upper_pose_active_ = -1;
     upper_motion_done_ = true;
@@ -709,10 +709,12 @@ void State_Footstep::enter()
         if (command_source_) command_->set_input(command_source_->input());
         feed_vision();
         // A scripted plan (csv, csv_global) needs no aiming, so it starts walking
-        // as soon as the state is entered and stops once the plan is done. The
-        // operator-driven sources wait in standby for the Y press.
+        // as soon as the state is entered and stops once the plan is done. Vision
+        // does the same: RB+Y already entered this state, so do not wait for
+        // another Y. Joystick / goal wait in standby for the Y press.
         const int plan_steps = command_source_ ? command_source_->size() : 0;
-        const bool auto_start = command_->global_mode() || plan_steps > 0;
+        const bool auto_start = command_->global_mode() || plan_steps > 0
+                             || command_->vision_mode();
         if (auto_start) command_->reset();
         else            command_->hold_standby(0.0f);
         env->reset();

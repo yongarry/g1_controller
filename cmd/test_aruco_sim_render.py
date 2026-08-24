@@ -22,6 +22,7 @@ import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import aruco_common as ac
+from aruco_footstep_perception import TargetEstimator
 
 _PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_XML = os.path.join(_PROJ, "..", "unitree_mujoco", "unitree_robots",
@@ -43,8 +44,6 @@ def main():
     args = p.parse_args()
 
     board = ac.load_board(args.board)
-    d = board["dictionary"]
-    dictionary = ac.make_dictionary(d["bits"], d["size"], d["seed"])
     obj_points = ac.board_object_points(board)
 
     model = mujoco.MjModel.from_xml_path(args.xml)
@@ -59,7 +58,11 @@ def main():
     model.vis.global_.offwidth = max(model.vis.global_.offwidth, args.width)
     model.vis.global_.offheight = max(model.vis.global_.offheight, args.height)
     renderer = mujoco.Renderer(model, args.height, args.width)
-    renderer.update_scene(data, camera="d435i")
+    # Default vis option hides geom groups 3+; ArUco markers are group 4.
+    scene_option = mujoco.MjvOption()
+    for i in range(len(scene_option.geomgroup)):
+        scene_option.geomgroup[i] = 1
+    renderer.update_scene(data, camera="d435i", scene_option=scene_option)
     rgb = renderer.render()
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
 
@@ -70,8 +73,9 @@ def main():
                   [0, fy, args.height / 2.0],
                   [0, 0, 1.0]])
 
-    det = cv2.aruco.ArucoDetector(dictionary, ac.detector_parameters())
-    corners, ids, _ = det.detectMarkers(gray)
+    # Same detector the perception node runs (not a standalone ArucoDetector).
+    est = TargetEstimator(board, min_markers=2)
+    corners, ids = est._detect(gray)
     ids = ids.ravel() if ids is not None else np.array([], int)
     print(f"detected {len(ids)} markers: {sorted(ids.tolist())}")
 

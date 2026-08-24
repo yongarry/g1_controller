@@ -1,21 +1,23 @@
-# Deploy configuration for the Isaac Lab G1 MindYourStep policy
-# (G1MindYourStepFlatEnvCfg / g1_mind_your_step).
+# Deploy configuration for the loco_mujoco G1 MindYourStep policy
+# (train/conf_g1.yaml, outputs/MYS_unitree_g1/260819-flat).
 #
 # ONNX under <policy_dir>/exported/ (obs [1, 109] -> actions [1, 29]).
-# Matches mys_env_cfg.ObservationsCfg.PolicyCfg and LowerJointPositionActionCfg
-# (joint_names=ALL_JOINTS, upper_joint_names=None -> the policy drives all 29 DoF).
-policy_file: policy.onnx
+# Graph already applies RunningMeanStd; feed RAW actor observations.
+# Actor (policy) order from conf_g1.yaml observation_spec + GoalDoubleFootPlacement:
+#   projected_gravity(3) + joint_pos(29) + ang_vel(3) + joint_vel*0.1(29)
+#   + last_raw_action(29) + foot_cmd(16) = 109
+# len_obs_history: 1  (no history stacking)
+policy_file: PPOJax_saved_actor.onnx
 
 # --- whole body (action manager), SDK 0..28 ---
-# ALL_JOINTS in mys_env_cfg is LEG_JOINTS + UPPER_JOINTS, which maps 1:1 onto SDK 0..28.
+# Matches conf_g1.yaml actuation_spec / robot_joints_to_consider.
 joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
                 12, 13, 14,
                 15, 16, 17, 18, 19, 20, 21,
                 22, 23, 24, 25, 26, 27, 28]
-# sim.dt 0.005 * decimation 4
+# timestep 0.005 * n_substeps 4
 step_dt: 0.02
-# G1_29DOF_MYS_CFG actuators: hips 100/2, knee 150/3, ankles 20/1,
-# waist 100/3, shoulders+elbow+wrist_roll 30/1, wrist pitch/yaw 10/1.
+# conf_g1.yaml control_params p_gain / d_gain
 stiffness: [100.0, 100.0, 100.0, 150.0, 20.0, 20.0,
             100.0, 100.0, 100.0, 150.0, 20.0, 20.0,
             100.0, 100.0, 100.0,
@@ -26,7 +28,7 @@ damping: [2.0, 2.0, 2.0, 3.0, 1.0, 1.0,
           3.0, 3.0, 3.0,
           1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
           1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-# G1_29DOF_MYS_CFG / G1_29DOF_MYS_JOINT_CFG
+# conf_g1.yaml control_params.nominal_joint_positions
 default_joint_pos: [-0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
                     -0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
                     0.0, 0.0, 0.0,
@@ -36,12 +38,9 @@ default_joint_pos: [-0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
 actions:
   LowerJointPositionAction:
     joint_ids: null
-    # NOTE on clip semantics: this controller clamps the *processed* target
-    # (raw * scale + offset), whereas training clips the *raw* action to +-1 and
-    # then clamps the processed target to the hard joint limits
-    # (LowerJointPositionActionCfg.clip = +-1, clip_to_joint_limits = True).
-    # The equivalent processed-space box is therefore
-    #     [max(offset - 1, jnt_lower), min(offset + 1, jnt_upper)]
+    # PDControl: clip raw action to +-clip_actions (1.0), action_scale 1.0,
+    # target = nominal + raw, then clamp to joint limits.
+    # Processed-space box: [max(offset - 1, jnt_lower), min(offset + 1, jnt_upper)]
     # with jnt_* taken from config/urdf/g1_29dof.urdf.
     clip: [[-1.1000, 0.9000], [-0.5236, 1.0000], [-1.0000, 1.0000], [-0.0873, 1.3000], [-0.8727, 0.5236], [-0.2618, 0.2618],
            [-1.1000, 0.9000], [-1.0000, 0.5236], [-1.0000, 1.0000], [-0.0873, 1.3000], [-0.8727, 0.5236], [-0.2618, 0.2618],
@@ -58,56 +57,64 @@ actions:
              0.0, 0.2, 0.0, 1.5, 0.0, 0.0, 0.0,
              0.0, -0.2, 0.0, 1.5, 0.0, 0.0, 0.0]
 
-# Observation order MUST match G1MindYourStepFlatEnvCfg.ObservationsCfg.PolicyCfg.
-# Dims: ang_vel(3) + grav(3) + q_rel(29) + qd(29) + last_proc_act(29) + foot_cmd(16) = 109.
+# YAML key order is the ONNX input order. First term must have `params`
+# so ObservationManager names the group "obs" (matches the ONNX input).
+# JointPosArray is absolute qpos (not q - default). LastAction is the raw
+# policy output (not processed joint targets). joint_vel uses
+# domain_randomization_params.norm_factors.joint_vel = 0.1.
 observations:
-  base_ang_vel:
-    params: {}
-    scale: null
-    clip: null
-    history_length: 5
   projected_gravity:
     params: {}
     scale: null
     clip: null
-    history_length: 5
-  joint_pos_ordered_rel:
+    history_length: 1
+  use_gym_history: false
+  joint_pos:
     params: {}
     scale: null
     clip: null
-    history_length: 5
+    history_length: 1
+  base_ang_vel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 1
   joint_vel_ordered:
     params: {}
-    scale: null
+    scale: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
+            0.1, 0.1, 0.1,
+            0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
+            0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
     clip: null
-    history_length: 5
-  last_processed_action:
+    history_length: 1
+  last_action:
     params: {}
     scale: null
     clip: null
-    history_length: 5
+    history_length: 1
   mys_foot_command:
     params: {}
     scale: null
     clip: null
-    history_length: 5
+    history_length: 1
 
 # --- gait command (joystick teleop OR csv replay) ---
 # Generate the CSV from a Footstep plan with:
 #   python3 cmd/convert2mys.py
+# (default --heading keep: pass step_x/y/yaw through, same as Footstep csv)
 # Then summarize landing error with:
 #   python3 cmd/eval_footstep.py --mys
 gait:
-  feet_distance: 0.2     # [m] nominal lateral stance width (joystick still mode)
-  # Must match MindYourStepFootCommandCfg.gait_frequency_range in training (1.0).
+  feet_distance: 0.2     # [m] goal_params.feet_distance / still_feet_distance
+  # Must match goal_params.gait_frequency_range in conf_g1.yaml (1.0).
   # gait_process advances by step_dt * f, so a full cycle is 1/f = 1.0 s and each
   # foothold (half cycle) takes 0.5 s. Changing this desynchronizes the policy
   # from the gait clock it was trained on.
   gait_frequency: 1.0
-  stop_steps: 4          # joystick: half-steps to settle before standing still
-  vert_max: 0.5          # [m] joystick full stick forward/backward
+  stop_steps: 4          # half-steps to settle (joystick release, or CSV plan end)
+  vert_max: 0.5          # [m] xy_distance_range max
   lat_max: 0.3           # [m] joystick full stick lateral
-  yaw_max: 0.5236        # [rad] joystick full stick yaw (~pi/6)
+  yaw_max: 0.2618        # [rad] yaw_range_deg +-15
   deadzone: 0.1
 
   # command_source: joystick | csv
