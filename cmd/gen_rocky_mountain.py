@@ -1,64 +1,30 @@
 #!/usr/bin/env python3
 # Copyright (c) 2025, DYROS.
 #
-# Read absolute world-frame foot targets (config/footcommands_global.csv) and
-# write a "rocky mountain" terrain into a MuJoCo scene XML: instead of isolated
-# stepping-stone pillars, the space between footholds is filled with a dense
-# field of rock-colored columns whose heights are interpolated from the footstep
-# heights, so the whole path looks like one continuous mountain climb.
+# Read absolute world-frame foot targets (config/footcommands_global.csv) and write a "rocky mountain" terrain into a MuJoCo scene XML: instead of isolated stepping-stone pillars, the space between footholds is filled with a dense field of rock-colored columns whose heights are interpolated from the footstep heights, so the whole path looks like one continuous mountain climb.
 #
 # Layers generated (all inside one marked, idempotent region):
 #   1. start_platform      - spawn platform under the robot (same as before)
 #   2. footstep_ground     - large ground plane at the lowest terrain level
-#   3. rock_XXXX           - columns forming the mountain body, either boxes
-#                            (--rock-shape box, yaw-jittered) or cylinders
-#                            (--rock-shape cylinder, basalt-like), on a square
-#                            or hexagonal lattice (--layout). The ground behind
-#                            the spawn point is left bare out to --start-clear so
-#                            the robot starts on the platform rather than inside
-#                            the rocks, while the rock ahead of it (where it
-#                            actually walks) is untouched.
-#                            Cells within --flush-radius of a stepping stone are
-#                            set to exactly that stone's landing height (minus a
-#                            2 mm anti-z-fighting drop), so the stones blend
-#                            flush into the surrounding rock. Beyond that, cell
-#                            tops fade over --flush-blend to `clearance` below
-#                            the interpolated footstep surface so the filler
-#                            terrain never obstructs the swing foot.
-#   4. stone_XX            - stepping stones the robot lands on. Their XY is the
-#                            CSV target shifted by --offset-x/y in that foot's
-#                            yaw frame (forward=x, left=y); Z uses --offset-z in
-#                            world up. Boxes are yaw-aligned; cylinders ignore yaw.
-#   5. target_L_XX/R_XX    - collision-free spheres at the raw CSV target
-#                            (no offset): LEFT = red, RIGHT = blue
+#   3. rock_XXXX           - columns forming the mountain body, either boxes (--rock-shape box, yaw-jittered) or cylinders (--rock-shape cylinder, basalt-like), on a square or hexagonal lattice (--layout). The ground behind the spawn point is left bare out to --start-clear so the robot starts on the platform rather than inside the rocks, while the rock ahead of it (where it actually walks) is untouched. Cells within --flush-radius of a stepping stone match that stone's landing height; --flush-drop is applied only on the stone's local -x (approach) side so the swing foot is not snagged while climbing, and the local +x (ahead) side stays flush. Beyond that, cell tops fade over --flush-blend to `clearance` below the interpolated footstep surface so the filler terrain never obstructs the swing foot.
+#   4. stone_XX            - stepping stones the robot lands on. Their XY is the CSV target shifted by --offset-x/y in that foot's yaw frame (forward=x, left=y); Z uses --offset-z in world up. Boxes are yaw-aligned; cylinders ignore yaw.
+#   5. target_L_XX/R_XX    - collision-free spheres at the raw CSV target (no offset): LEFT = red, RIGHT = blue
 #
-# The terrain only fills a corridor around the footstep path (distance-to-path
-# falloff), so it reads as a mountain ridge rather than a filled field.
-# Deterministic per-cell noise + color variation give a natural rocky look.
+# The terrain only fills a corridor around the footstep path (distance-to-path falloff), so it reads as a mountain ridge rather than a filled field. Deterministic per-cell noise + color variation give a natural rocky look.
 #
-# Column geometry is two independent numbers: --spacing is how far apart the
-# columns sit, --rock-width is how wide each one is. Making the width larger than
-# the spacing overlaps neighbors and hides the seams. (--overlap is the older
-# relative way to say the same thing: width = spacing * overlap.)
+# Column geometry is two independent numbers: --spacing is how far apart the columns sit, --rock-width is how wide each one is. Making the width larger than the spacing overlaps neighbors and hides the seams. (--overlap is the older relative way to say the same thing: width = spacing * overlap.)
 #
-# Round columns do not tile a square lattice, so the width must exceed the
-# spacing by 1.414x (grid) or 1.155x (hex) or gaps open up between neighbors.
-# The script computes that threshold and warns, in millimeters, when the chosen
-# width is under it.
+# Round columns do not tile a square lattice, so the width must exceed the spacing by 1.414x (grid) or 1.155x (hex) or gaps open up between neighbors. The script computes that threshold and warns, in millimeters, when the chosen width is under it.
 #
-# Idempotent: re-running strips every prior auto-generated region (footstep /
-# rocky / aruco assets) and aruco side-files, then writes a fresh block, so the
-# three scene generators never stack on the same XML.
+# Idempotent: re-running strips every prior auto-generated region (footstep / rocky / aruco assets) and aruco side-files, then writes a fresh block, so the three scene generators never stack on the same XML.
 #
 # Usage:
 #   python3 cmd/gen_rocky_mountain.py
 #   python3 cmd/gen_rocky_mountain.py --spacing 0.15 --rock-width 0.18
 #   python3 cmd/gen_rocky_mountain.py --spacing 0.10 --rock-width 0.13 --clearance 0.03
-#   python3 cmd/gen_rocky_mountain.py --rock-shape cylinder --layout hex \
-#       --spacing 0.14 --rock-width 0.17
+#   python3 cmd/gen_rocky_mountain.py --rock-shape cylinder --layout hex --spacing 0.14 --rock-width 0.17
 #   python3 cmd/gen_rocky_mountain.py --rock-shape cylinder --stone-shape cylinder
-#   python3 cmd/gen_rocky_mountain.py --csv config/footcommands_global.csv \
-#       --xml ../unitree_mujoco/unitree_robots/g1/scene_29dof_footstep.xml
+#   python3 cmd/gen_rocky_mountain.py --csv config/footcommands_global.csv --xml ../unitree_mujoco/unitree_robots/g1/scene_29dof_footstep.xml
 
 import argparse
 import csv
@@ -74,9 +40,7 @@ from gen_footstep_scene import clear_aruco_artifacts, inject as _inject_shared
 _PROJ_DIR = os.path.dirname(_THIS_DIR)
 _WS_DIR = os.path.dirname(_PROJ_DIR)
 DEFAULT_CSV = os.path.join(_PROJ_DIR, "config", "footcommands_global.csv")
-DEFAULT_XML = os.path.join(
-    _WS_DIR, "unitree_mujoco", "unitree_robots", "g1", "scene_29dof_footstep.xml"
-)
+DEFAULT_XML = os.path.join(_WS_DIR, "unitree_mujoco", "unitree_robots", "g1", "scene_29dof_footstep.xml")
 
 BEGIN_MARK = "<!-- BEGIN rocky mountain geoms (auto-generated by gen_rocky_mountain.py) -->"
 END_MARK = "<!-- END rocky mountain geoms -->"
@@ -84,14 +48,15 @@ END_MARK = "<!-- END rocky mountain geoms -->"
 COLOR_STONE = "0.6 0.5 0.4 1"
 # COLOR_STONE = "0.7 0.6 0.5 1"
 # COLOR_GROUND = "0.7 0.6 0.5 1"
-COLOR_GROUND = "0.3 0.3 0.3 1"
+# COLOR_GROUND = "0.3 0.3 0.3 1"
+COLOR_GROUND = "0.6 0.5 0.4 1"
 COLOR_PLATFORM = COLOR_STONE
 COLOR_TARGET_L = "0.9 0.15 0.15 1"   # left foot target: red
 COLOR_TARGET_R = "0.15 0.35 0.95 1"  # right foot target: blue
 ROCK_BASE_RGB = (0.6, 0.5, 0.4)
 # ROCK_BASE_RGB = (0.48, 0.44, 0.40)   # brown-gray rock
 
-DEFAULT_PLATFORM_SIZE = (0.12, 0.17)
+DEFAULT_PLATFORM_SIZE = (0.1, 0.17)
 DEFAULT_PLATFORM_TOP = 0.0
 DEFAULT_PLATFORM_HALF_HEIGHT = 0.5  # when min terrain z >= platform_top
 
@@ -114,13 +79,7 @@ def read_targets(path):
             if not cells or all(c == "" for c in cells):
                 continue
             foot = cells[idx["foot"]].strip().lower()
-            rows.append({
-                "foot": "R" if foot in ("r", "right") else "L",
-                "x": float(cells[idx["pos_x"]]),
-                "y": float(cells[idx["pos_y"]]),
-                "z": float(cells[idx["pos_z"]]),
-                "yaw": float(cells[idx["yaw"]]),
-            })
+            rows.append({"foot": "R" if foot in ("r", "right") else "L", "x": float(cells[idx["pos_x"]]), "y": float(cells[idx["pos_y"]]), "z": float(cells[idx["pos_z"]]), "yaw": float(cells[idx["yaw"]])})
     if not rows:
         raise ValueError(f"no data rows in {path}")
     return rows
@@ -131,29 +90,32 @@ def yaw_to_quat(yaw):
 
 
 def yaw_frame_offset(x, y, yaw, ox, oy):
-    """Translate (x, y) by (ox, oy) expressed in the foot yaw frame.
-
-    Foot frame: +x forward along yaw, +y left. World = R(yaw) * local.
-    """
+    """Translate (x, y) by (ox, oy) expressed in the foot yaw frame. Foot frame: +x forward along yaw, +y left. World = R(yaw) * local."""
     c, s = math.cos(yaw), math.sin(yaw)
     return x + c * ox - s * oy, y + s * ox + c * oy
 
 
-def stone_landing_poses(rows, off):
-    """Stepping-stone landings: XY offset in each foot's yaw frame, Z world-up.
+def stone_local_x(cx, cy, sx, sy, yaw):
+    """Cell (cx, cy) in the stone yaw frame: +x forward along yaw."""
+    dx, dy = cx - sx, cy - sy
+    return math.cos(yaw) * dx + math.sin(yaw) * dy
 
-    Returns list of dicts with keys sx, sy, sz, yaw, foot (CSV x/y/z untouched).
-    """
+
+def directional_flush_drop(cx, cy, sx, sy, yaw, drop):
+    """--flush-drop behind the stone (local -x); 0 ahead (local +x)."""
+    if stone_local_x(cx, cy, sx, sy, yaw) < 0.0:
+        return drop
+    return 0.0
+
+
+def stone_landing_poses(rows, off):
+    """Stepping-stone landings: XY offset in each foot's yaw frame, Z world-up. Returns list of dicts with keys sx, sy, sz, yaw, foot (CSV x/y/z untouched)."""
     ox, oy, oz = off
     out = []
     for r in rows:
         sx, sy = yaw_frame_offset(r["x"], r["y"], r["yaw"], ox, oy)
-        out.append({
-            "sx": sx, "sy": sy, "sz": r["z"] + oz,
-            "yaw": r["yaw"], "foot": r["foot"],
-        })
+        out.append({"sx": sx, "sy": sy, "sz": r["z"] + oz, "yaw": r["yaw"], "foot": r["foot"]})
     return out
-
 
 
 # ---------------------------------------------------------------------------
@@ -196,17 +158,12 @@ def path_distance(px, py, path):
     """Min 2D distance from (px, py) to the footstep polyline."""
     d = float("inf")
     for k in range(len(path) - 1):
-        d = min(d, point_segment_dist(px, py,
-                                      path[k][0], path[k][1],
-                                      path[k + 1][0], path[k + 1][1]))
+        d = min(d, point_segment_dist(px, py, path[k][0], path[k][1], path[k + 1][0], path[k + 1][1]))
     return d
 
 
 def idw_height(px, py, points, power=2.0, eps=0.02):
-    """Inverse-distance-weighted surface height at (px, py).
-
-    points: list of (x, y, z). eps keeps weights finite on top of a point.
-    """
+    """Inverse-distance-weighted surface height at (px, py). points: list of (x, y, z). eps keeps weights finite on top of a point."""
     wsum = 0.0
     zsum = 0.0
     for (x, y, z) in points:
@@ -225,12 +182,7 @@ HEX_ROW_DY = math.sqrt(3.0) / 2.0  # triangular-lattice row pitch, in cell units
 
 
 def lattice_cells(x0, y0, x1, y1, cell, layout):
-    """Yield (i, j, cx, cy) column centers covering the [x0,x1]x[y0,y1] box.
-
-    'grid' is a square lattice; 'hex' staggers alternate rows by half a cell and
-    tightens row spacing to sqrt(3)/2, giving the tighter triangular packing that
-    round columns need to avoid gaps.
-    """
+    """Yield (i, j, cx, cy) column centers covering the [x0,x1]x[y0,y1] box. 'grid' is a square lattice; 'hex' staggers alternate rows by half a cell and tightens row spacing to sqrt(3)/2, giving the tighter triangular packing that round columns need to avoid gaps."""
     row_dy = cell * (HEX_ROW_DY if layout == "hex" else 1.0)
     nx = max(1, int(math.ceil((x1 - x0) / cell)) + (1 if layout == "hex" else 0))
     ny = max(1, int(math.ceil((y1 - y0) / row_dy)))
@@ -242,10 +194,7 @@ def lattice_cells(x0, y0, x1, y1, cell, layout):
 
 
 def column_width(args):
-    """Effective rock column width [m]: box edge-to-edge, or cylinder diameter.
-
-    --rock-width sets it outright; otherwise it is --spacing scaled by --overlap.
-    """
+    """Effective rock column width [m]: box edge-to-edge, or cylinder diameter. --rock-width sets it outright; otherwise it is --spacing scaled by --overlap."""
     if args.rock_width is not None:
         return args.rock_width
     return args.spacing * args.overlap
@@ -257,21 +206,7 @@ def required_width(shape, layout, spacing):
 
 
 def required_overlap(shape, layout):
-    """Smallest --overlap that leaves no gaps between neighboring columns.
-
-    A column's reach is `half` = 0.5*cell*overlap. The worst-covered point of a
-    square lattice is a cell corner at cell/sqrt(2); of a triangular lattice, a
-    triangle circumcenter at cell/sqrt(3). A cylinder reaches exactly `half` in
-    every direction, so below the returned value every one of those points is
-    deterministically bare.
-
-    Boxes are not held to this. They reach `half` only at their edge midpoints
-    but sqrt(2)*half at their corners, each corner point is covered if any one
-    of the four columns around it reaches, and --max-cell-yaw randomizes which
-    way each one points. Axis-aligned boxes tile each axis independently, so 1.0
-    seals; yaw-jittered boxes can open occasional pinholes above that, which is
-    what --overlap 1.25 already absorbs.
-    """
+    """Smallest --overlap that leaves no gaps between neighboring columns. A column's reach is `half` = 0.5*cell*overlap. The worst-covered point of a square lattice is a cell corner at cell/sqrt(2); of a triangular lattice, a triangle circumcenter at cell/sqrt(3). A cylinder reaches exactly `half` in every direction, so below the returned value every one of those points is deterministically bare. Boxes are not held to this. They reach `half` only at their edge midpoints but sqrt(2)*half at their corners, each corner point is covered if any one of the four columns around it reaches, and --max-cell-yaw randomizes which way each one points. Axis-aligned boxes tile each axis independently, so 1.0 seals; yaw-jittered boxes can open occasional pinholes above that, which is what --overlap 1.25 already absorbs."""
     if shape == "box":
         return 1.0
     return 2.0 / math.sqrt(3.0) if layout == "hex" else math.sqrt(2.0)
@@ -282,15 +217,10 @@ def required_overlap(shape, layout):
 # ---------------------------------------------------------------------------
 
 def build_rock_cells(stones, args, z_ground):
-    """Lattice of columns approximating a rocky mountain under the footsteps.
-
-    `stones` is from stone_landing_poses() (yaw-frame XY offset already applied).
-    Columns are boxes or cylinders (args.rock_shape) on a square or triangular
-    lattice (args.layout). Returns a list of XML geom lines.
-    """
-    # surface control points: stone landings + a virtual start point so the
-    # terrain descends smoothly onto the spawn platform
-    stone_xyz = [(s["sx"], s["sy"], s["sz"]) for s in stones]
+    """Lattice of columns approximating a rocky mountain under the footsteps. `stones` is from stone_landing_poses() (yaw-frame XY offset already applied). Columns are boxes or cylinders (args.rock_shape) on a square or triangular lattice (args.layout). Returns a list of XML geom lines."""
+    # surface control points: stone landings + a virtual start point so the terrain descends smoothly onto the spawn platform
+    stone_pose = [(s["sx"], s["sy"], s["sz"], s["yaw"]) for s in stones]
+    stone_xyz = [(sx, sy, sz) for sx, sy, sz, _ in stone_pose]
     points = [(0.0, 0.0, args.platform_top)] + stone_xyz
     path = [(p[0], p[1]) for p in points]
 
@@ -315,13 +245,8 @@ def build_rock_cells(stones, args, z_ground):
     start_keep_out = args.start_clear + reach
 
     for i, j, cx, cy in lattice_cells(x0, y0, x1, y1, cell, args.layout):
-        # keep the ground behind the spawn point bare: the robot faces +x and
-        # only ever walks forward, so rock there is clutter it could spawn
-        # inside. Columns from --start-clear-front onward are kept, which is
-        # what the robot steps onto. `reach` makes the radius hold for any yaw.
-        if (args.start_clear > 0.0
-                and cx < args.start_clear_front
-                and math.hypot(cx, cy) < start_keep_out):
+        # keep the ground behind the spawn point bare: the robot faces +x and only ever walks forward, so rock there is clutter it could spawn inside. Columns from --start-clear-front onward are kept, which is what the robot steps onto. `reach` makes the radius hold for any yaw.
+        if args.start_clear > 0.0 and cx < args.start_clear_front and math.hypot(cx, cy) < start_keep_out:
             continue
 
         d = path_distance(cx, cy, path)
@@ -338,23 +263,26 @@ def build_rock_cells(stones, args, z_ground):
         u = cell_hash(i, j, args.seed)
         base_top = z_surf - args.clearance - args.noise * u
 
-        # flush zone: match the landing height of nearby stepping stones
-        # exactly (min over all stones in range so a higher neighbor never
-        # blocks a lower landing spot); tiny drop avoids z-fighting with
-        # the stone's own top face
+        # flush zone: match nearby stone landing height (min over stones in range so a higher neighbor never blocks a lower landing). --flush-drop is applied only behind each stone (local -x, the approach side) so the swing foot is not snagged while climbing; ahead (local +x) stays flush.
         r0 = args.flush_radius
         r1 = r0 + args.flush_blend
-        z_in = [z for (sx_, sy_, z) in stone_xyz
-                if (cx - sx_) ** 2 + (cy - sy_) ** 2 <= r0 * r0]
+        z_in = [
+            z - directional_flush_drop(cx, cy, sx_, sy_, yaw, args.flush_drop)
+            for (sx_, sy_, z, yaw) in stone_pose
+            if (cx - sx_) ** 2 + (cy - sy_) ** 2 <= r0 * r0
+        ]
         if z_in:
-            top = min(z_in) - args.flush_drop
+            top = min(z_in)
         else:
-            ds_min, z_near = min(
-                (math.hypot(cx - sx_, cy - sy_), z) for (sx_, sy_, z) in stone_xyz)
+            ds_min, z_near, yaw_near, sx_n, sy_n = min(
+                (math.hypot(cx - sx_, cy - sy_), z, yaw, sx_, sy_)
+                for (sx_, sy_, z, yaw) in stone_pose
+            )
             if ds_min < r1:
                 # cosine blend from flush height back to the far-field surface
                 t = 0.5 * (1.0 - math.cos(math.pi * (ds_min - r0) / args.flush_blend))
-                top = (1.0 - t) * (z_near - args.flush_drop) + t * base_top
+                drop = directional_flush_drop(cx, cy, sx_n, sy_n, yaw_near, args.flush_drop)
+                top = (1.0 - t) * (z_near - drop) + t * base_top
             else:
                 top = base_top
         # taper toward the ground away from the path
@@ -373,21 +301,12 @@ def build_rock_cells(stones, args, z_ground):
 
         if args.rock_shape == "cylinder":
             # rotationally symmetric about z, so a yaw quat would be a no-op
-            lines.append(
-                f'    <geom name="rock_{n_cells:04d}" type="cylinder" group="4" '
-                f'size="{half:.4f} {hz:.4f}" '
-                f'pos="{cx:.4f} {cy:.4f} {zc:.4f}" {rgba}/>'
-            )
+            lines.append(f'    <geom name="rock_{n_cells:04d}" type="cylinder" group="4" size="{half:.4f} {hz:.4f}" pos="{cx:.4f} {cy:.4f} {zc:.4f}" {rgba}/>')
         else:
             # small random yaw makes the lattice read as tumbled rock
             yaw = (cell_hash(i, j, args.seed, salt=1.0) - 0.5) * 2.0 * args.max_cell_yaw
             qw, qx, qy, qz = yaw_to_quat(yaw)
-            lines.append(
-                f'    <geom name="rock_{n_cells:04d}" type="box" group="4" '
-                f'size="{half:.4f} {half:.4f} {hz:.4f}" '
-                f'pos="{cx:.4f} {cy:.4f} {zc:.4f}" '
-                f'quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" {rgba}/>'
-            )
+            lines.append(f'    <geom name="rock_{n_cells:04d}" type="box" group="4" size="{half:.4f} {half:.4f} {hz:.4f}" pos="{cx:.4f} {cy:.4f} {zc:.4f}" quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" {rgba}/>')
     return lines
 
 
@@ -421,14 +340,8 @@ def build_scene(rows, off, args):
     plat_hx, plat_hy = args.platform_size
 
     lines = [
-        f'    <geom name="start_platform" type="box" group="3"'
-        f'size="{plat_hx:.4f} {plat_hy:.4f} {plat_hz:.4f}" '
-        f'pos="0 0 {plat_zc:.4f}" '
-        f'rgba="{COLOR_PLATFORM}"/>',
-        f'    <geom name="footstep_ground" type="plane" '
-        f'pos="{plane_cx:.4f} {plane_cy:.4f} {z_ground:.4f}" '
-        f'size="{plane_hx:.4f} {plane_hy:.4f} 0.1" '
-        f'rgba="{COLOR_GROUND}" material="MatPlane2" group="2"/>',
+        f'    <geom name="start_platform" type="box" group="3" size="{plat_hx:.4f} {plat_hy:.4f} {plat_hz:.4f}" pos="0 0 {plat_zc:.4f}" rgba="{COLOR_PLATFORM}"/>',
+        f'    <geom name="footstep_ground" type="plane" pos="{plane_cx:.4f} {plane_cy:.4f} {z_ground:.4f}" size="{plane_hx:.4f} {plane_hy:.4f} 0.1" rgba="{COLOR_GROUND}" material="MatPlane2" group="2"/>',
     ]
 
     # 1) mountain body (follows stone landings, not raw CSV markers)
@@ -452,30 +365,17 @@ def build_scene(rows, off, args):
         rgba = rock_rgba(z_top, z_lo, z_span, i, 0, args.seed, salt=3.0)
         if args.stone_shape == "cylinder":
             # round pillar: HX is the radius, HY is unused, yaw has no effect
-            lines.append(
-                f'    <geom name="stone_{i:02d}" type="cylinder" group="3" '
-                f'size="{hx:.4f} {hz:.4f}" '
-                f'pos="{x:.4f} {y:.4f} {zc:.4f}" {rgba}/>'
-            )
+            lines.append(f'    <geom name="stone_{i:02d}" type="cylinder" group="3" size="{hx:.4f} {hz:.4f}" pos="{x:.4f} {y:.4f} {zc:.4f}" {rgba}/>')
         else:
             qw, qx, qy, qz = yaw_to_quat(s["yaw"])
-            lines.append(
-                f'    <geom name="stone_{i:02d}" type="box" group="3" '
-                f'size="{hx:.4f} {hy:.4f} {hz:.4f}" '
-                f'pos="{x:.4f} {y:.4f} {zc:.4f}" '
-                f'quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" {rgba}/>'
-            )
+            lines.append(f'    <geom name="stone_{i:02d}" type="box" group="3" size="{hx:.4f} {hy:.4f} {hz:.4f}" pos="{x:.4f} {y:.4f} {zc:.4f}" quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" {rgba}/>')
 
     # 3) markers at raw CSV targets (no offset) — command / policy goal
     rad = args.marker_radius
     for i, r in enumerate(rows):
         x, y, z = r["x"], r["y"], r["z"] + rad
         color = COLOR_TARGET_L if r["foot"] == "L" else COLOR_TARGET_R
-        lines.append(
-            f'    <geom name="target_{r["foot"]}_{i:02d}" type="sphere" group="5" '
-            f'size="{rad:.4f}" pos="{x:.4f} {y:.4f} {z:.4f}" '
-            f'rgba="{color}" contype="0" conaffinity="0"/>'
-        )
+        lines.append(f'    <geom name="target_{r["foot"]}_{i:02d}" type="sphere" group="5" size="{rad:.4f}" pos="{x:.4f} {y:.4f} {z:.4f}" rgba="{color}" contype="0" conaffinity="0"/>')
 
     block = f"    {BEGIN_MARK}\n" + "\n".join(lines) + f"\n    {END_MARK}"
     return block, z_ground, z_min, len(rock_lines), n_stones
@@ -487,18 +387,8 @@ def build_scene(rows, off, args):
 
 def strip_start_platform(xml_text):
     """Remove hand-authored start_platform so the generated block owns it."""
-    xml_text = re.sub(
-        r'\n\s*<!-- start platform:.*?-->\s*\n',
-        '\n',
-        xml_text,
-        count=1,
-    )
-    xml_text = re.sub(
-        r'\n\s*<geom name="start_platform"[^/]*/>\s*\n',
-        '\n',
-        xml_text,
-        count=1,
-    )
+    xml_text = re.sub(r'\n\s*<!-- start platform:.*?-->\s*\n', '\n', xml_text, count=1)
+    xml_text = re.sub(r'\n\s*<geom name="start_platform"[^/]*/>\s*\n', '\n', xml_text, count=1)
     return xml_text
 
 
@@ -512,101 +402,47 @@ def inject(xml_text, block):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(
-        description="Generate a rocky-mountain footstep terrain in a MuJoCo scene XML.")
+    p = argparse.ArgumentParser(description="Generate a rocky-mountain footstep terrain in a MuJoCo scene XML.")
     p.add_argument("--csv", default=DEFAULT_CSV, help="footcommands_global.csv path")
     p.add_argument("--xml", default=DEFAULT_XML, help="MuJoCo scene XML to edit")
 
     t = p.add_argument_group("terrain")
-    t.add_argument("--rock-shape", choices=["box", "cylinder"], default="box",
-                   help="box: yaw-jittered blocks (default); cylinder: round "
-                        "basalt-like columns (yaw has no effect, and they need "
-                        "to be wider than the spacing so neighbors still touch)")
-    t.add_argument("--layout", choices=["grid", "hex"], default="grid",
-                   help="grid: square lattice (default); hex: staggered "
-                        "triangular lattice, which packs round columns much "
-                        "tighter (needs 1.155x the spacing, not 1.414x)")
-    t.add_argument("--spacing", "--cell", type=float, default=0.2,
-                   dest="spacing", metavar="M",
-                   help="distance between neighboring rock columns [m]")
-    t.add_argument("--rock-width", type=float, default=None, metavar="M",
-                   help="width of each rock column [m]: box edge-to-edge, or "
-                        "cylinder diameter. Set this to size the columns "
-                        "directly; leave it out to derive the width from "
-                        "--spacing x --overlap instead")
-    t.add_argument("--overlap", type=float, default=1.,
-                   help="fallback way to size columns when --rock-width is not "
-                        "given: width = spacing * overlap. 1.0 makes columns "
-                        "exactly meet, >1 overlaps them to hide seams")
+    t.add_argument("--rock-shape", choices=["box", "cylinder"], default="box", help="box: yaw-jittered blocks (default); cylinder: round basalt-like columns (yaw has no effect, and they need to be wider than the spacing so neighbors still touch)")
+    t.add_argument("--layout", choices=["grid", "hex"], default="grid", help="grid: square lattice (default); hex: staggered triangular lattice, which packs round columns much tighter (needs 1.155x the spacing, not 1.414x)")
+    t.add_argument("--spacing", "--cell", type=float, default=0.2, dest="spacing", metavar="M", help="distance between neighboring rock columns [m]")
+    t.add_argument("--rock-width", type=float, default=None, metavar="M", help="width of each rock column [m]: box edge-to-edge, or cylinder diameter. Set this to size the columns directly; leave it out to derive the width from --spacing x --overlap instead")
+    t.add_argument("--overlap", type=float, default=1., help="fallback way to size columns when --rock-width is not given: width = spacing * overlap. 1.0 makes columns exactly meet, >1 overlaps them to hide seams")
 
-    t.add_argument("--start-clear", type=float, default=0.3, metavar="M",
-                   help="radius behind the spawn origin kept free of rock "
-                        "columns [m], so the robot starts on the bare platform "
-                        "instead of in the rocks (0 disables)")
-    t.add_argument("--start-clear-front", type=float, default=0.3, metavar="X",
-                   help="forward edge of that clear zone [x, m]. The default 0 "
-                        "clears only behind the spawn point and leaves the rock "
-                        "the robot walks onto intact; raise it to also clear "
-                        "ahead, or pass a large value for a full circle")
+    t.add_argument("--start-clear", type=float, default=0.3, metavar="M", help="radius behind the spawn origin kept free of rock columns [m], so the robot starts on the bare platform instead of in the rocks (0 disables)")
+    t.add_argument("--start-clear-front", type=float, default=0.3, metavar="X", help="forward edge of that clear zone [x, m]. The default 0 clears only behind the spawn point and leaves the rock the robot walks onto intact; raise it to also clear ahead, or pass a large value for a full circle")
 
-    t.add_argument("--clearance", type=float, default=0.01,
-                   help="how far the filler rock stays below the interpolated "
-                        "foot-landing surface [m], outside the flush zones")
-    t.add_argument("--flush-radius", type=float, default=0.35,
-                   help="rock cells within this distance of a stepping stone "
-                        "match its landing height exactly [m]")
-    t.add_argument("--flush-blend", type=float, default=0.25,
-                   help="transition band from flush height back to the "
-                        "clearance surface [m]")
-    t.add_argument("--flush-drop", type=float, default=0.002,
-                   help="tiny offset below the stone top in flush zones to "
-                        "avoid z-fighting [m]")
-                        
-    t.add_argument("--noise", type=float, default=0.03,
-                   help="max downward height jitter per rock column [m]")
-    t.add_argument("--max-cell-yaw", type=float, default=1.79,
-                   help="max random yaw of each rock column [rad]")
-    t.add_argument("--corridor", nargs=2, type=float, default=[0.45, 10.5],
-                   metavar=("W0", "W1"),
-                   help="distance from the footstep path: full height inside W0, "
-                        "tapered to ground at W1 [m]")
-    t.add_argument("--terrain-margin", type=float, default=1.8,
-                   help="extent of the terrain grid beyond the footstep bounding box [m]")
-    t.add_argument("--idw-power", type=float, default=2.0,
-                   help="inverse-distance-weighting exponent for the surface")
-    t.add_argument("--min-height", type=float, default=0.015,
-                   help="rock columns shorter than this are skipped [m]")
-    t.add_argument("--seed", type=float, default=7.0,
-                   help="seed for the deterministic per-cell noise")
+    t.add_argument("--clearance", type=float, default=0., help="how far the filler rock stays below the interpolated foot-landing surface [m], outside the flush zones")
+    t.add_argument("--flush-radius", type=float, default=0.3, help="rock cells within this distance of a stepping stone match its landing height exactly [m]")
+    t.add_argument("--flush-blend", type=float, default=0.3, help="transition band from flush height back to the clearance surface [m]")
+    t.add_argument("--flush-drop", type=float, default=0.2, help="how far below the stone top the flush rock sits on the approach side (stone local -x) [m]; ahead (local +x) is 0 so the landing is not undercut")
+
+    t.add_argument("--noise", type=float, default=0.03, help="max downward height jitter per rock column [m]")
+    t.add_argument("--max-cell-yaw", type=float, default=1.79, help="max random yaw of each rock column [rad]")
+    t.add_argument("--corridor", nargs=2, type=float, default=[0.45, 10.5], metavar=("W0", "W1"), help="distance from the footstep path: full height inside W0, tapered to ground at W1 [m]")
+    t.add_argument("--terrain-margin", type=float, default=1.0, help="extent of the terrain grid beyond the footstep bounding box [m]")
+    t.add_argument("--idw-power", type=float, default=2.0, help="inverse-distance-weighting exponent for the surface")
+    t.add_argument("--min-height", type=float, default=0.015, help="rock columns shorter than this are skipped [m]")
+    t.add_argument("--seed", type=float, default=7.0, help="seed for the deterministic per-cell noise")
 
     s = p.add_argument_group("stepping stones & markers")
-    s.add_argument("--stone-shape", choices=["box", "cylinder"], default="box",
-                   help="box: yaw-aligned rectangular foothold (default); "
-                        "cylinder: round pillar of radius HX (yaw ignored)")
-    s.add_argument("--stone-size", nargs=2, type=float, default=[0.1, 0.1],
-                   metavar=("HX", "HY"),
-                   help="stepping-stone half-extents [m] "
-                        "(cylinder: radius=HX, HY unused)")
-    s.add_argument("--marker-radius", type=float, default=0.025,
-                   help="foot-target sphere radius [m] (left red, right blue)")
+    s.add_argument("--stone-shape", choices=["box", "cylinder"], default="box", help="box: yaw-aligned rectangular foothold (default); cylinder: round pillar of radius HX (yaw ignored)")
+    s.add_argument("--stone-size", nargs=2, type=float, default=[0.1, 0.1], metavar=("HX", "HY"), help="stepping-stone half-extents [m] (cylinder: radius=HX, HY unused)")
+    s.add_argument("--marker-radius", type=float, default=0.025, help="foot-target sphere radius [m] (left red, right blue)")
 
     g = p.add_argument_group("platform & ground")
-    g.add_argument("--plane-margin", type=float, default=1.0,
-                   help="extra half-length around the footstep bounding box for the ground plane [m]")
-    g.add_argument("--platform-size", nargs=2, type=float,
-                   default=list(DEFAULT_PLATFORM_SIZE), metavar=("HX", "HY"),
-                   help="spawn platform horizontal half-extents [m]")
-    g.add_argument("--platform-top", type=float, default=DEFAULT_PLATFORM_TOP,
-                   help="spawn platform top face height [m] (default: z=0)")
+    g.add_argument("--plane-margin", type=float, default=1.0, help="extra half-length around the footstep bounding box for the ground plane [m]")
+    g.add_argument("--platform-size", nargs=2, type=float, default=list(DEFAULT_PLATFORM_SIZE), metavar=("HX", "HY"), help="spawn platform horizontal half-extents [m]")
+    g.add_argument("--platform-top", type=float, default=DEFAULT_PLATFORM_TOP, help="spawn platform top face height [m] (default: z=0)")
 
-    o = p.add_argument_group(
-        "offsets (stones/rocks only; spheres stay on CSV targets)")
-    o.add_argument("--offset-x", type=float, default=0.0,
-                   help="stone XY offset in each foot's yaw frame, forward [m]")
-    o.add_argument("--offset-y", type=float, default=0.0,
-                   help="stone XY offset in each foot's yaw frame, left [m]")
-    o.add_argument("--offset-z", type=float, default=0.0,
-                   help="stone top height offset in world-up [m]")
+    o = p.add_argument_group("offsets (stones/rocks only; spheres stay on CSV targets)")
+    o.add_argument("--offset-x", type=float, default=0.02, help="stone XY offset in each foot's yaw frame, forward [m]")
+    o.add_argument("--offset-y", type=float, default=0.0, help="stone XY offset in each foot's yaw frame, left [m]")
+    o.add_argument("--offset-z", type=float, default=-0.035, help="stone top height offset in world-up [m] (CSV pos_z is already the sole/terrain plane; do not re-apply the training ankle-to-sole -0.035)")
 
     args = p.parse_args()
     if args.corridor[1] <= args.corridor[0]:
@@ -614,18 +450,14 @@ if __name__ == "__main__":
 
     width = column_width(args)
     if width <= 0.0:
-        p.error("rock column width must be positive "
-                "(check --rock-width / --overlap)")
+        p.error("rock column width must be positive (check --rock-width / --overlap)")
     need = required_width(args.rock_shape, args.layout, args.spacing)
     if width < need - 1e-9:
         hint = ""
         if args.layout == "grid":
             hex_need = required_width(args.rock_shape, "hex", args.spacing)
             hint = f", or --layout hex which only needs {1000*hex_need:.0f} mm"
-        print(f"warning: {args.rock_shape} columns {1000*width:.0f} mm wide on a "
-              f"{1000*args.spacing:.0f} mm {args.layout} lattice leave ~"
-              f"{1000*0.5*(need - width):.0f} mm gaps; use "
-              f"--rock-width {need:.3f}{hint}")
+        print(f"warning: {args.rock_shape} columns {1000*width:.0f} mm wide on a {1000*args.spacing:.0f} mm {args.layout} lattice leave ~{1000*0.5*(need - width):.0f} mm gaps; use --rock-width {need:.3f}{hint}")
 
     rows = read_targets(args.csv)
     off = (args.offset_x, args.offset_y, args.offset_z)
@@ -638,14 +470,6 @@ if __name__ == "__main__":
     with open(args.xml, "w") as f:
         f.write(inject(xml_text, block))
 
-    ground_note = (
-        f"at platform_top={args.platform_top:.4f} (min pos_z={z_min:.4f} >= platform)"
-        if z_min >= args.platform_top
-        else f"z_ground={z_ground:.4f}"
-    )
-    print(f"Rock columns: {args.rock_shape}, {1000*width:.0f} mm wide, "
-          f"{1000*args.spacing:.0f} mm apart, {args.layout} lattice")
-    print(f"Wrote start_platform + ground plane + {n_rocks} {args.rock_shape} "
-          f"rock columns ({args.layout} lattice) + {n_stones} {args.stone_shape} "
-          f"stepping stones + {len(rows)} target markers "
-          f"into {args.xml} ({ground_note})")
+    ground_note = f"at platform_top={args.platform_top:.4f} (min pos_z={z_min:.4f} >= platform)" if z_min >= args.platform_top else f"z_ground={z_ground:.4f}"
+    print(f"Rock columns: {args.rock_shape}, {1000*width:.0f} mm wide, {1000*args.spacing:.0f} mm apart, {args.layout} lattice")
+    print(f"Wrote start_platform + ground plane + {n_rocks} {args.rock_shape} rock columns ({args.layout} lattice) + {n_stones} {args.stone_shape} stepping stones + {len(rows)} target markers into {args.xml} ({ground_note})")

@@ -2,14 +2,15 @@
 # Shared settings live in ../../deploy_base.yaml — edit that for common changes.
 extends: ../../deploy_base.yaml
 
-policy_file: 260802_2005_2d_heuri1.onnx
+# policy_file: 260802_2005_2d_heuri1.onnx
 # policy_file: 260803_0254_3d_heuri1.onnx
 # policy_file: 260801_0247_2d_heuri2.onnx
 # policy_file: 260801_0938_3d_heuri2.onnx
+policy_file: 260703_1430_3d_prev.onnx
 
 # Optional per-ablation overrides (deep-merged into deploy_base.yaml):
 footstep:
-  com_generate_type: heuri   # prev | heuri | heuri2
+  com_generate_type: prev   # prev | heuri | heuri2
 
 # The whole group uses history_length=10, skip_history_tick=2 (history-major).
 observations:

@@ -25,7 +25,8 @@ them through ONNX Runtime, and publishes low-level Unitree motor commands throug
 - Per-step landing-error logs (`log/footstep_eval_<time>.csv` /
   `log/footstep_eval_mys_<time>.csv`) for Footstep ↔ MindYourStep comparison.
 - Helper scripts under `cmd/` to generate foot-command CSVs, convert them for MYS,
-  summarize tracking error, and build MuJoCo stepping-stone / goal-marker scenes.
+  summarize tracking error, and build MuJoCo stepping-stone / rocky-mountain /
+  scatter-obstacle / goal-marker scenes.
 - Designed for Unitree G1 29-DoF deployment workflows.
 
 ## Project Layout
@@ -38,6 +39,9 @@ them through ONNX Runtime, and publishes low-level Unitree motor commands throug
 │   ├── convert2mys.py                # footcommands.csv -> footstepcommands_mys.csv
 │   ├── eval_footstep.py              # summarize landing error from eval CSVs
 │   ├── gen_footstep_scene.py         # write stepping stones into MuJoCo scene XML
+│   ├── gen_rocky_mountain.py         # fill the path with a rocky-mountain terrain
+│   ├── gen_shatters_obstacles.py     # scatter box shards on a flat 10x10 ground
+│   ├── gen_aruco_footstep_scene.py   # stepping stones + ArUco markers
 │   └── gen_goals.py                  # write goal markers into MuJoCo scene XML
 ├── config/
 │   ├── config.yaml                   # FSM states, transitions, and policy paths
@@ -327,7 +331,15 @@ python3 cmd/gen_footstep_scene.py
 **`gen_cmd.py`** — samples `step_x`, `step_y`, `step_z`, `step_yaw` from trained
 ranges (defaults match `footstep.ranges` in deploy.yaml). Feet alternate R/L; the
 last row is a stop step (`step_x=0`, `step_z=0`, `step_yaw=0`). Override ranges
-with flags, e.g. `--z -0.1 0.15`.
+with flags, e.g. `--z -0.1 0.15`. `--realistic` avoids two consecutive large
+x / y / |z| samples so landing error cannot stack the next global-plan command
+past the trained limits. `--real` skips MuJoCo scene generation.
+
+By default `gen_cmd.py` also converts the plan to world frame, writes the MYS
+replay CSV, and runs `gen_footstep_scene.py`. Comment / uncomment the
+`subprocess.run` lines at the bottom to switch to rocky-mountain, ArUco, or
+shatter-obstacle scenes. Each scene generator strips every prior auto-generated
+XML region first, so they never stack.
 
 Local CSV columns:
 
@@ -355,6 +367,29 @@ only the marked auto-generated region):
 
 Then set `command_source: csv_global` in the footstep `deploy.yaml` and run
 `./run_sim.sh`.
+
+**`gen_rocky_mountain.py`** — same XML, but fills the corridor around the
+footstep path with a dense field of rock columns whose tops follow the landing
+heights. Stepping stones sit in the rock; `--flush-drop` lowers only the
+approach side (stone local −x) so the swing foot is not snagged while climbing,
+while the far side (local +x) stays flush.
+
+```bash
+python3 cmd/gen_rocky_mountain.py
+python3 cmd/gen_rocky_mountain.py --flush-drop 0.2 --flush-radius 0.3
+```
+
+**`gen_shatters_obstacles.py`** — joystick-mode clutter: a flat 10×10 ground
+with randomly placed **box** shards. No CSV. The origin 0.5×0.5 m is left
+empty so the robot can spawn clear. Size ranges are independent per axis:
+
+```bash
+python3 cmd/gen_shatters_obstacles.py
+python3 cmd/gen_shatters_obstacles.py --count 200 --x 0.01 0.03 --y 0.01 0.03 --z 0.005 0.02
+```
+
+Then set `command_source: joystick` and point the simulator at
+`scene_29dof_footstep.xml`.
 
 ### Goal-reaching mode (`command_source: goal`)
 
@@ -667,3 +702,7 @@ This project is derived from the deploy controller architecture in
 [unitreerobotics/unitree_rl_lab](https://github.com/unitreerobotics/unitree_rl_lab),
 which provides reinforcement learning environments and deployment tools for
 Unitree robots based on IsaacLab.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
