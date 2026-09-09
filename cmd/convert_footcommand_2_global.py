@@ -152,9 +152,9 @@ if __name__ == "__main__":
     parser.add_argument("--input", default=DEFAULT_INPUT, help="local footcommands.csv path")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="output footcommands_global.csv path")
     # Spawn foot world poses [x, y, z, yaw]; must match deploy.yaml global_init_*foot.
-    parser.add_argument("--init-lfoot", nargs=4, type=float, default=[-0.02179, 0.118506, 0.0, 0.0],
+    parser.add_argument("--init-lfoot", nargs=4, type=float, default=[-0.01259, 0.1185, 0.03458, 0.0],
                         metavar=("X", "Y", "Z", "YAW"), help="left foot world pose at spawn")
-    parser.add_argument("--init-rfoot", nargs=4, type=float, default=[-0.02179, -0.118506, 0.0, 0.0],
+    parser.add_argument("--init-rfoot", nargs=4, type=float, default=[-0.01259, -0.1185, 0.03458, 0.0],
                         metavar=("X", "Y", "Z", "YAW"), help="right foot world pose at spawn")
     args = parser.parse_args()
 

@@ -26,8 +26,8 @@ FSM:
 
   Passive:
     transitions: 
-      FixStand: LT + up.on_pressed        # LowCoM (-0.4)
-      FixStand_MYS: LT + left.on_pressed  # MindYourStep stand (-0.2)
+      FixStand: LT + up.on_pressed | f.on_pressed        # LowCoM (-0.4)
+      FixStand_MYS: LT + left.on_pressed | h.on_pressed  # MindYourStep stand (-0.2)
     mode: [
       1,1,1,1,1,1,
       1,1,1,1,1,1,
@@ -45,9 +45,9 @@ FSM:
   # LowCoM stand for Footstep policies.
   FixStand:
     transitions:
-      Passive: LT + B.on_pressed
-      Velocity: RB + X.on_pressed
-      Footstep: RB + Y.on_pressed
+      Passive: LT + B.on_pressed | p.on_pressed
+      Velocity: RB + X.on_pressed | v.on_pressed
+      Footstep: RB + Y.on_pressed | g.on_pressed
     kp: [
       200., 100., 100., 350., 540., 40.,
       200., 100., 100., 350., 540., 40.,
@@ -75,9 +75,9 @@ FSM:
   # Stand pose for MindYourStep (G1_29DOF_MYS_CFG).
   FixStand_MYS:
     transitions:
-      Passive: LT + B.on_pressed
-      Velocity: RB + X.on_pressed
-      MindYourStep: RB + A.on_pressed
+      Passive: LT + B.on_pressed | p.on_pressed
+      Velocity: RB + X.on_pressed | v.on_pressed
+      MindYourStep: RB + A.on_pressed | m.on_pressed
     kp: [
       200., 100., 100., 350., 540., 40.,
       200., 100., 100., 350., 540., 40.,
@@ -104,15 +104,15 @@ FSM:
     ]
   Velocity:
     transitions:
-      Passive: LT + B.on_pressed
-      Mimic_Dance_102: LT(2s) + down.on_pressed
-      Mimic_Gangnam_Style: LT(2s) + right.on_pressed
+      Passive: LT + B.on_pressed | p.on_pressed
+      Mimic_Dance_102: LT(2s) + down.on_pressed | c.on_pressed
+      Mimic_Gangnam_Style: LT(2s) + right.on_pressed | k.on_pressed
 
     policy_dir: config/policy/velocity
     # policy_dir: ../../../logs/rsl_rl/unitree_g1_29dof_velocity
   Footstep:
     transitions:
-      Passive: LT + B.on_pressed
+      Passive: LT + B.on_pressed | p.on_pressed
     policy_dir: config/policy/footstep/obs_full
     # policy_dir: config/policy/footstep/obs_heuri
     # policy_dir: config/policy/footstep/obs_woik
@@ -120,12 +120,12 @@ FSM:
     # policy_dir: config/policy/footstep/obs_wocomz_heuri
   MindYourStep:
     transitions:
-      Passive: LT + B.on_pressed
+      Passive: LT + B.on_pressed | p.on_pressed
     policy_dir: config/policy/mindyourstep
   Mimic_Dance_102:
     transitions: 
-      Passive: LT + B.on_pressed
-      Velocity: RB + X.on_pressed
+      Passive: LT + B.on_pressed | p.on_pressed
+      Velocity: RB + X.on_pressed | v.on_pressed
     fps: 60
     motion_file: config/policy/mimic/dance_102/params/G1_Take_102.bvh_60hz.csv
     policy_dir: config/policy/mimic/dance_102/
@@ -133,8 +133,8 @@ FSM:
     time_end: 24.0
   Mimic_Gangnam_Style:
     transitions: 
-      Passive: LT + B.on_pressed
-      Velocity: RB + X.on_pressed
+      Passive: LT + B.on_pressed | p.on_pressed
+      Velocity: RB + X.on_pressed | v.on_pressed
     fps: 60
     motion_file: config/policy/mimic/gangnam_style/params/G1_gangnam_style_V01.bvh_60hz.csv
     policy_dir: config/policy/mimic/gangnam_style/

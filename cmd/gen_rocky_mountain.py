@@ -58,7 +58,7 @@ ROCK_BASE_RGB = (0.6, 0.5, 0.4)
 
 DEFAULT_PLATFORM_SIZE = (0.1, 0.17)
 DEFAULT_PLATFORM_TOP = 0.0
-DEFAULT_PLATFORM_HALF_HEIGHT = 0.5  # when min terrain z >= platform_top
+DEFAULT_PLATFORM_HALF_HEIGHT = 0.10  # 10 cm; top face always at z=0
 
 
 # ---------------------------------------------------------------------------
@@ -321,14 +321,10 @@ def build_scene(rows, off, args):
     z_min = min(zs_top)
     platform_top = args.platform_top
 
-    if z_min >= platform_top:
-        z_ground = platform_top
-        plat_hz = DEFAULT_PLATFORM_HALF_HEIGHT
-        plat_zc = platform_top - plat_hz
-    else:
-        z_ground = z_min
-        plat_hz = (platform_top - z_min) * 0.5
-        plat_zc = z_min + plat_hz
+    z_ground = platform_top if z_min >= platform_top else z_min
+    plat_hz = DEFAULT_PLATFORM_HALF_HEIGHT
+    plat_zc = -plat_hz  # top face at z=0
+    plat_x = off[0]    # world +x only; y/z unchanged
 
     xs = [s["sx"] for s in stones]
     ys = [s["sy"] for s in stones]
@@ -340,7 +336,7 @@ def build_scene(rows, off, args):
     plat_hx, plat_hy = args.platform_size
 
     lines = [
-        f'    <geom name="start_platform" type="box" group="3" size="{plat_hx:.4f} {plat_hy:.4f} {plat_hz:.4f}" pos="0 0 {plat_zc:.4f}" rgba="{COLOR_PLATFORM}"/>',
+        f'    <geom name="start_platform" type="box" group="3" size="{plat_hx:.4f} {plat_hy:.4f} {plat_hz:.4f}" pos="{plat_x:.4f} 0 {plat_zc:.4f}" rgba="{COLOR_PLATFORM}"/>',
         f'    <geom name="footstep_ground" type="plane" pos="{plane_cx:.4f} {plane_cy:.4f} {z_ground:.4f}" size="{plane_hx:.4f} {plane_hy:.4f} 0.1" rgba="{COLOR_GROUND}" material="MatPlane2" group="2"/>',
     ]
 
@@ -440,9 +436,11 @@ if __name__ == "__main__":
     g.add_argument("--platform-top", type=float, default=DEFAULT_PLATFORM_TOP, help="spawn platform top face height [m] (default: z=0)")
 
     o = p.add_argument_group("offsets (stones/rocks only; spheres stay on CSV targets)")
-    o.add_argument("--offset-x", type=float, default=0.02, help="stone XY offset in each foot's yaw frame, forward [m]")
+    # o.add_argument("--offset-x", type=float, default=0.02, help="stone XY offset in each foot's yaw frame, forward [m]")
+    o.add_argument("--offset-x", type=float, default=0.035, help="stone XY offset in each foot's yaw frame, forward [m]")
     o.add_argument("--offset-y", type=float, default=0.0, help="stone XY offset in each foot's yaw frame, left [m]")
-    o.add_argument("--offset-z", type=float, default=-0.035, help="stone top height offset in world-up [m] (CSV pos_z is already the sole/terrain plane; do not re-apply the training ankle-to-sole -0.035)")
+    # o.add_argument("--offset-z", type=float, default=-0.035, help="stone top height offset in world-up [m] (CSV pos_z is already the sole/terrain plane; do not re-apply the training ankle-to-sole -0.035)")
+    o.add_argument("--offset-z", type=float, default=-0.03458, help="stone top height offset in world-up [m] (CSV pos_z is already the sole/terrain plane; do not re-apply the training ankle-to-sole -0.035)")
 
     args = p.parse_args()
     if args.corridor[1] <= args.corridor[0]:

@@ -37,7 +37,9 @@ public:
                 auto func = unitree::common::dsl::Compile(*ast);
                 registered_checks.emplace_back(
                     std::make_pair(
-                        [func]()->bool{ return func(FSMState::lowstate->joystick); },
+                        [func]()->bool{
+                            return func(FSMState::lowstate->joystick, FSMState::keyboard.get());
+                        },
                         fsm_id
                     )
                 );

@@ -367,7 +367,8 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     {
         command_source_ = isaaclab::make_foot_command_source(
             fs, param::proj_dir, &FSMState::lowstate->joystick,
-            default_input_, joy_x_scale_, joy_y_scale_, joy_yaw_scale_, default_start_phase);
+            default_input_, joy_x_scale_, joy_y_scale_, joy_yaw_scale_, default_start_phase,
+            FSMState::keyboard.get());
         // CSV may impose the starting swing foot; honor it so phase alternation aligns.
         fcfg.start_phase_indicator = command_source_->start_phase_indicator();
 
@@ -787,6 +788,10 @@ void State_Footstep::enter()
                 if (command_->step_completed())
                 {
                     write_eval_row();
+                    const auto& cmd = command_->last_step_command();
+                    spdlog::info("Executed foot command : x={:.4f} y={:.4f} z={:.4f} [m], yaw={:.4f} [rad] ({})",
+                                 cmd[0], cmd[1], cmd[2], command_->last_step_command_yaw(),
+                                 command_->last_step_swing_right() ? "R" : "L");
                     const auto& e = command_->last_step_error();
                     spdlog::info("Foot Position error : {:.4f} [m]",
                                  std::sqrt(e[0]*e[0] + e[1]*e[1] + e[2]*e[2]));
@@ -795,20 +800,6 @@ void State_Footstep::enter()
                     spdlog::info(">> Z error : {:.4f} [m]", std::abs(e[2]));
                     spdlog::info("Foot Yaw error : {:.4f} [rad]",
                                  std::abs(command_->last_step_yaw_error()));
-                    const auto& fc = command_->foot_command0();
-                    // foot_command0: [x, y, z, roll, pitch, yaw, ssp_t, dsp_t, height]
-                    if (command_->vision_mode())
-                    {
-                        const auto& ids = command_->planned_vision_ids();
-                        spdlog::info("Next foot step command (vision id={}, next={}): "
-                                     "x={:.4f} y={:.4f} z={:.4f} [m], yaw={:.4f} [rad]",
-                                     ids[0], ids[1], fc[0], fc[1], fc[2], fc[5]);
-                    }
-                    else
-                    {
-                        spdlog::info("Next foot step command : x={:.4f} y={:.4f} z={:.4f} [m], yaw={:.4f} [rad]",
-                                     fc[0], fc[1], fc[2], fc[5]);
-                    }
                     // spdlog::info("t_total: {:.3f}", command_->last_step_total_time());
                 }
 
@@ -885,7 +876,9 @@ void State_Footstep::run()
 {
     // Y releases the standby hold and starts walking (checked here, not in the
     // policy thread: on_pressed is a single-tick edge of the 1 kHz FSM loop).
-    if (FSMState::lowstate->joystick.Y.on_pressed) walk_started_ = true;
+    if (FSMState::lowstate->joystick.Y.on_pressed
+        || (FSMState::keyboard && FSMState::keyboard->on_pressed && FSMState::keyboard->key() == "g"))
+        walk_started_ = true;
 
     update_upper_target();
 

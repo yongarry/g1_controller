@@ -9,9 +9,8 @@
 # to the stone top. Boxes show yaw-aligned rectangular footprints; cylinders are
 # round pillars (yaw is ignored visually).
 #
-# Offsets (--offset-x/y/z) apply only to stepping stones:
-#   stone XY = CSV target + R(yaw)*(ox, oy)   # foot yaw frame: +x fwd, +y left
-#   stone Z  = CSV pos_z + oz                 # world-up
+# Offsets (--offset-x/y/z) apply to stepping stones (yaw-frame XY, world Z).
+# start_platform also takes --offset-x (world +x only; y/z stay 0 / top-at-0).
 # Collision-free spheres stay on the raw CSV targets (L=red, R=blue).
 #
 # The geoms are written into a marked region of the XML and the script is
@@ -22,10 +21,9 @@
 # Frame note:
 #   footcommands_global.csv is in the real world frame (its initial stance foot is
 #   anchored at the spawn foot pose, matching deploy.yaml global_init_*foot), so the
-#   targets already line up with the MuJoCo scene. When min(pos_z) is below the
-#   spawn platform top, start_platform spans down to that level and footstep_ground
-#   sits there. If min(pos_z) is at/above platform top, footstep_ground moves to
-#   the platform top and start_platform uses a fixed depth.
+#   targets already line up with the MuJoCo scene. start_platform is always 10 cm
+#   half-height with its top face at z=0 so ankle-pitch z is measured from a
+#   known spawn plane. footstep_ground still follows min(pos_z) as before.
 #
 # Usage:
 #   python3 cmd/gen_footstep_scene.py
@@ -82,7 +80,7 @@ COLOR_TARGET_L = "0.9 0.15 0.15 1"   # left foot target: red
 COLOR_TARGET_R = "0.15 0.35 0.95 1"  # right foot target: blue
 DEFAULT_PLATFORM_SIZE = (0.1, 0.17)
 DEFAULT_PLATFORM_TOP = 0.0
-DEFAULT_PLATFORM_HALF_HEIGHT = 0.5  # when min(pos_z) >= platform_top
+DEFAULT_PLATFORM_HALF_HEIGHT = 0.10  # 10 cm; top face always at z=0
 DEFAULT_MARKER_RADIUS = 0.025
 
 def read_targets(path):
@@ -181,14 +179,10 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
     zs_top = [s["sz"] for s in stones]
     z_min = min(zs_top)
 
-    if z_min >= platform_top:
-        z_ground = platform_top
-        plat_hz = DEFAULT_PLATFORM_HALF_HEIGHT
-        plat_zc = platform_top - plat_hz
-    else:
-        z_ground = z_min
-        plat_hz = (platform_top - z_min) * 0.5
-        plat_zc = z_min + plat_hz
+    z_ground = platform_top if z_min >= platform_top else z_min
+    plat_hz = DEFAULT_PLATFORM_HALF_HEIGHT
+    plat_zc = -plat_hz  # top face at z=0
+    plat_x = off[0]    # world +x only; y/z unchanged
 
     xs = [s["sx"] for s in stones]
     ys = [s["sy"] for s in stones]
@@ -200,7 +194,7 @@ def build_footsteps(rows, shape, size_xy, off, center_y, plane_margin,
     lines = [
         f'    <geom name="start_platform" type="box" group="3"'
         f'size="{plat_hx:.4f} {plat_hy:.4f} {plat_hz:.4f}" '
-        f'pos="0 0 {plat_zc:.4f}" '
+        f'pos="{plat_x:.4f} 0 {plat_zc:.4f}" '
         f'rgba="{COLOR_PLATFORM}"/>',
         f'    <geom name="footstep_ground" type="plane" '
         f'pos="{plane_cx:.4f} {plane_cy:.4f} {z_ground:.4f}" '
@@ -332,7 +326,7 @@ if __name__ == "__main__":
                         "(spheres stay on CSV)")
     p.add_argument("--offset-y", type=float, default=0.0,
                    help="stone XY offset in each foot's yaw frame, left [m]")
-    p.add_argument("--offset-z", type=float, default=-0.035,
+    p.add_argument("--offset-z", type=float, default=-0.03458,
                    help="stone top height offset in world-up [m]")
     p.add_argument("--marker-radius", type=float, default=DEFAULT_MARKER_RADIUS,
                    help="foot-target sphere radius [m] (left red, right blue)")

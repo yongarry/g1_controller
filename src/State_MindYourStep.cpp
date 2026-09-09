@@ -271,7 +271,9 @@ void State_MindYourStep::enter()
         auto read_sticks = [this]{
             if (gait_->csv_mode()) return;
             auto& joy = FSMState::lowstate->joystick;
-            gait_->set_input(joy.ly(), -joy.lx(), -joy.rx());
+            float ly = joy.ly(), lx = joy.lx(), rx = joy.rx();
+            if (FSMState::keyboard) FSMState::keyboard->apply_stick_axes(ly, lx, rx);
+            gait_->set_input(ly, -lx, -rx);
         };
 
         // Measure swing foot in the stance-foot yaw frame (same frame as cmd_*).

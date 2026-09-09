@@ -25,6 +25,7 @@
  * --- Multi-condition OR ---
  * - "X|Y"                # Either X or Y is pressed
  * - "A.on_pressed|B.on_pressed"  # Either A or B is just pressed
+ * - "LT + up.on_pressed | f.on_pressed"  # joystick combo or keyboard 'f'
  *
  * --- Logical NOT ---
  * - "!A + B"             # A is not pressed and B is pressed
@@ -69,6 +70,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <unitree/dds_wrapper/common/unitree_joystick.hpp>
+#include "isaaclab/devices/keyboard/keyboard.h"
 
 namespace unitree::common::dsl {
 
@@ -156,8 +158,8 @@ inline std::string ToLower(std::string s) {
   return s;
 }
 
-// Retrieve KeyBase from UnitreeJoystick (case-insensitive)
-inline const KeyBase& GetKey(const UnitreeJoystick& joy, std::string_view name_sv) {
+// Retrieve KeyBase from UnitreeJoystick (case-insensitive). nullptr if not a joystick name.
+inline const KeyBase* TryGetKey(const UnitreeJoystick& joy, std::string_view name_sv) {
   const std::string name = ToLower(std::string{name_sv});
   static const std::unordered_map<std::string, const KeyBase* (*)(const UnitreeJoystick&)> kMap = {
     {"back", [](auto& j)->const KeyBase*{ return &static_cast<const KeyBase&>(j.back); }},
@@ -184,8 +186,29 @@ inline const KeyBase& GetKey(const UnitreeJoystick& joy, std::string_view name_s
     {"rt",   [](auto& j)->const KeyBase*{ return &static_cast<const KeyBase&>(j.RT); }},
   };
   auto it = kMap.find(name);
-  if (it == kMap.end()) throw std::runtime_error("Unknown key name: " + std::string(name_sv));
-  return *it->second(joy);
+  if (it == kMap.end()) return nullptr;
+  return it->second(joy);
+}
+
+inline const KeyBase& GetKey(const UnitreeJoystick& joy, std::string_view name_sv) {
+  const KeyBase* kb = TryGetKey(joy, name_sv);
+  if (!kb) throw std::runtime_error("Unknown key name: " + std::string(name_sv));
+  return *kb;
+}
+
+// Names that are not joystick buttons are treated as Keyboard::key() values
+// (e.g. "f", "g", "p"). Arrow names like "up" stay joystick-only.
+inline bool EvalKeyboard(const Atom& a, const Keyboard* kbd) {
+  if (!kbd) return false;
+  const std::string want = ToLower(a.name);
+  const std::string have = ToLower(kbd->key());
+  switch (a.field) {
+    case Field::kPressed:    return !have.empty() && have == want;
+    case Field::kOnPressed:  return kbd->on_pressed && have == want;
+    case Field::kOnReleased: return false; // Keyboard does not keep the released key name
+    case Field::kHoldTimeGE: return false; // no hold-time tracking on Keyboard
+  }
+  return false;
 }
 
 // ======================== Recursive Descent Parser ========================
@@ -306,34 +329,36 @@ class Parser {
 };
 
 // ======================== Compile to Executable Predicate ========================
-inline std::function<bool(const UnitreeJoystick&)> Compile(const Node& n) {
+inline std::function<bool(const UnitreeJoystick&, const Keyboard*)> Compile(const Node& n) {
   switch (n.kind) {
     case Node::kAtom: {
       Atom a = n.atom;
-      return [a](const UnitreeJoystick& joy) -> bool {
-        const KeyBase& kb = GetKey(joy, a.name);
-        switch (a.field) {
-          case Field::kPressed:     return kb.pressed;
-          case Field::kOnPressed:   return kb.on_pressed;
-          case Field::kOnReleased:  return kb.on_released;
-          case Field::kHoldTimeGE:  return kb.pressed && (kb.pressed_time >= a.hold_seconds);
+      return [a](const UnitreeJoystick& joy, const Keyboard* kbd) -> bool {
+        if (const KeyBase* kb = TryGetKey(joy, a.name)) {
+          switch (a.field) {
+            case Field::kPressed:     return kb->pressed;
+            case Field::kOnPressed:   return kb->on_pressed;
+            case Field::kOnReleased:  return kb->on_released;
+            case Field::kHoldTimeGE:  return kb->pressed && (kb->pressed_time >= a.hold_seconds);
+          }
+          return false;
         }
-        return false;
+        return EvalKeyboard(a, kbd);
       };
     }
     case Node::kNot: {
       auto child = Compile(*n.lhs);
-      return [child](const UnitreeJoystick& joy){ return !child(joy); };
+      return [child](const UnitreeJoystick& joy, const Keyboard* kbd){ return !child(joy, kbd); };
     }
     case Node::kAnd: {
       auto l = Compile(*n.lhs);
       auto r = Compile(*n.rhs);
-      return [l, r](const UnitreeJoystick& joy){ return l(joy) && r(joy); };
+      return [l, r](const UnitreeJoystick& joy, const Keyboard* kbd){ return l(joy, kbd) && r(joy, kbd); };
     }
     case Node::kOr: {
       auto l = Compile(*n.lhs);
       auto r = Compile(*n.rhs);
-      return [l, r](const UnitreeJoystick& joy){ return l(joy) || r(joy); };
+      return [l, r](const UnitreeJoystick& joy, const Keyboard* kbd){ return l(joy, kbd) || r(joy, kbd); };
     }
   }
   throw std::runtime_error("Invalid node kind");

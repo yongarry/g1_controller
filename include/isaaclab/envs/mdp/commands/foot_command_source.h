@@ -30,6 +30,7 @@
 #include <spdlog/spdlog.h>
 
 #include "unitree/dds_wrapper/common/unitree_joystick.hpp"
+#include "isaaclab/devices/keyboard/keyboard.h"
 
 namespace isaaclab
 {
@@ -103,20 +104,26 @@ public:
     JoystickFootCommandSource(unitree::common::UnitreeJoystick* joy,
                               const FootCommandInput& def,
                               float x_scale, float y_scale, float yaw_scale,
-                              int start_phase)
-    : joy_(joy), def_(def), x_(x_scale), y_(y_scale), yaw_(yaw_scale), start_phase_(start_phase) {}
+                              int start_phase,
+                              Keyboard* kbd = nullptr)
+    : joy_(joy), kbd_(kbd), def_(def), x_(x_scale), y_(y_scale), yaw_(yaw_scale), start_phase_(start_phase) {}
 
     FootCommandInput input() override
     {
         FootCommandInput in = def_;
+        float ly = 0.f, lx = 0.f, rx = 0.f;
         if (joy_)
         {
-            in.step_x = joy_->ly() * x_;        // forward
-            in.step_yaw = -joy_->rx() * yaw_;   // turn
-            // lateral crab-walk: bias is applied per swing foot in the planner
-            // (left swing widens, right swing narrows for positive bias).
-            in.lateral_bias = -joy_->lx() * y_;
+            ly = joy_->ly();
+            lx = joy_->lx();
+            rx = joy_->rx();
         }
+        if (kbd_) kbd_->apply_stick_axes(ly, lx, rx);
+        in.step_x = ly * x_;        // forward
+        in.step_yaw = -rx * yaw_;   // turn
+        // lateral crab-walk: bias is applied per swing foot in the planner
+        // (left swing widens, right swing narrows for positive bias).
+        in.lateral_bias = -lx * y_;
         return in;
     }
 
@@ -125,6 +132,7 @@ public:
 
 private:
     unitree::common::UnitreeJoystick* joy_;
+    Keyboard* kbd_;
     FootCommandInput def_;
     float x_, y_, yaw_;
     int start_phase_;
@@ -393,7 +401,8 @@ inline std::unique_ptr<FootCommandSource> make_foot_command_source(
     unitree::common::UnitreeJoystick* joy,
     const FootCommandInput& def,
     float x_scale, float y_scale, float yaw_scale,
-    int default_start_phase)
+    int default_start_phase,
+    Keyboard* kbd = nullptr)
 {
     std::string src = fs["command_source"] ? fs["command_source"].as<std::string>() : "joystick";
     std::transform(src.begin(), src.end(), src.begin(), [](unsigned char c){ return std::tolower(c); });
@@ -411,7 +420,7 @@ inline std::unique_ptr<FootCommandSource> make_foot_command_source(
     if (src != "joystick")
         spdlog::warn("[FootCommand] unknown command_source '{}', defaulting to joystick", src);
     spdlog::info("[FootCommand] command_source = joystick");
-    return std::make_unique<JoystickFootCommandSource>(joy, def, x_scale, y_scale, yaw_scale, default_start_phase);
+    return std::make_unique<JoystickFootCommandSource>(joy, def, x_scale, y_scale, yaw_scale, default_start_phase, kbd);
 }
 
 } // namespace isaaclab

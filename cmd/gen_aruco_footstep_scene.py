@@ -273,12 +273,12 @@ if __name__ == "__main__":
     p.add_argument("--platform-size", nargs=2, type=float,
                    default=list(DEFAULT_PLATFORM_SIZE), metavar=("HX", "HY"))
     p.add_argument("--platform-top", type=float, default=DEFAULT_PLATFORM_TOP)
-    p.add_argument("--offset-x", type=float, default=-0.0,
+    p.add_argument("--offset-x", type=float, default=0.035,
                    help="stone/ArUco XY offset in each foot's yaw frame, forward [m] "
                         "(red/blue spheres stay on CSV)")
     p.add_argument("--offset-y", type=float, default=0.0,
                    help="stone/ArUco XY offset in each foot's yaw frame, left [m]")
-    p.add_argument("--offset-z", type=float, default=0.0,
+    p.add_argument("--offset-z", type=float, default=-0.03458,
                    help="stone/ArUco top height offset in world-up [m]")
     p.add_argument("--center", action="store_true")
     p.add_argument("--stair", action="store_true",

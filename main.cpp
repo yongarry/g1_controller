@@ -50,8 +50,13 @@ int main(int argc, char** argv)
     auto fsm = std::make_unique<CtrlFSM>(param::config["FSM"]);
     fsm->start();
 
-    std::cout << "Press [L2 + Up] for FixStand (Footstep), [L2 + Left] for FixStand_MYS.\n";
-    std::cout << "And then press [R1 + X/Y/A] to start controlling the robot.\n";
+    if (FSMState::keyboard && !FSMState::keyboard->has_tty())
+        spdlog::warn("No controlling TTY; keyboard FSM keys will not work.");
+
+    std::cout << "Joystick: [L2+Up] FixStand, [L2+Left] FixStand_MYS, then [R1+X/Y/A].\n";
+    std::cout << "Keyboard: type in THIS terminal (not the MuJoCo window).\n";
+    std::cout << "  [f] FixStand  [h] FixStand_MYS  [v] Velocity  [g] Footstep\n";
+    std::cout << "  [m] MindYourStep  [p] Passive.  Velocity: WASD / QE.  Walk start: [g].\n";
 
     while (true)
     {

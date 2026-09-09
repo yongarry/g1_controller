@@ -65,12 +65,14 @@ REALISTIC_SMALL_FRAC = 0.5
 # 05. real robot stair experiment
 # Fixed per-step z scene (uncomment to use). Length must equal `step` (incl. stop).
 # x/y/yaw still come from --x/--y/--yaw (or RANGE_*). Example 10-step climb:
+SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.0]
+SCENE_X = [0.400, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0]
 # SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.00, -0.15, -0.15, -0.15, -0.158,  0.0, 0.0]
 # SCENE_X = [0.400, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0,  0.26,  0.26,  0.25,  0.25,  0.25, 0.0]
 # SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.0, 0.0, 0.0, -0.15, -0.15, -0.15, -0.158,  0.0, 0.0]
 # SCENE_X = [0.4, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0]
-SCENE_Z = None
-SCENE_X = None
+# SCENE_Z = None
+# SCENE_X = None
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
 
@@ -206,10 +208,12 @@ if __name__ == "__main__":
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert2mys.py")])
 
 
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py"),"--stair", "--size", "0.125", "0.5"])
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_shatters_obstacles.py")])
+
 
 
 

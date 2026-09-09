@@ -4,6 +4,7 @@
 #pragma once
 
 #include "isaaclab/envs/manager_based_rl_env.h"
+#include "FSM/FSMState.h"
 
 namespace isaaclab
 {
@@ -140,9 +141,14 @@ REGISTER_OBSERVATION(velocity_commands)
 
     const auto cfg = env->cfg["commands"]["base_velocity"]["ranges"];
 
-    obs[0] = std::clamp(joystick->ly(), cfg["lin_vel_x"][0].as<float>(), cfg["lin_vel_x"][1].as<float>());
-    obs[1] = std::clamp(-joystick->lx(), cfg["lin_vel_y"][0].as<float>(), cfg["lin_vel_y"][1].as<float>());
-    obs[2] = std::clamp(-joystick->rx(), cfg["ang_vel_z"][0].as<float>(), cfg["ang_vel_z"][1].as<float>());
+    float ly = joystick ? joystick->ly() : 0.f;
+    float lx = joystick ? joystick->lx() : 0.f;
+    float rx = joystick ? joystick->rx() : 0.f;
+    if (FSMState::keyboard) FSMState::keyboard->apply_stick_axes(ly, lx, rx);
+
+    obs[0] = std::clamp(ly, cfg["lin_vel_x"][0].as<float>(), cfg["lin_vel_x"][1].as<float>());
+    obs[1] = std::clamp(-lx, cfg["lin_vel_y"][0].as<float>(), cfg["lin_vel_y"][1].as<float>());
+    obs[2] = std::clamp(-rx, cfg["ang_vel_z"][0].as<float>(), cfg["ang_vel_z"][1].as<float>());
 
     return obs;
 }
