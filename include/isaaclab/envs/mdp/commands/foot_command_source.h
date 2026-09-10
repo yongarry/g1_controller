@@ -163,8 +163,9 @@ public:
         {
             ++cursor_;
             const auto& r = rows_[cursor_];
-            spdlog::info("[FootCommand/CSV] step {}/{} (foot={}, x={:.3f} y={:.3f} yaw={:.3f})",
-                         cursor_ + 1, rows_.size(), labels_[cursor_], r.step_x, r.step_y, r.step_yaw);
+            spdlog::info("[FootCommand/CSV] step {}/{} (foot={}, x={:.3f} y={:.3f} z={:.3f} yaw={:.3f})",
+                         cursor_ + 1, rows_.size(), labels_[cursor_],
+                         r.step_x, r.step_y, r.step_z, r.step_yaw);
         }
         else if (!end_logged_)
         {

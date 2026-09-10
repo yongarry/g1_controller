@@ -32,7 +32,12 @@ class VrpGenerator
 public:
     VrpGenerator(float vrp_length, float dt, int num_lookahead_steps, float vrp_height,
                  float vrpx_offset = 0.03f, float vrpy_offset = 0.02f,
-                 float cube_diagonal_length = 0.361f)
+                 // Tocabi stepping-stone leftover: if XY travel of the swing foot
+                 // was under the cube diagonal, commanded step_z was replaced with
+                 // the current swing-foot height (or inverted for lookahead). The
+                 // 0.361 m threshold is larger than a G1 step (~0.2–0.3 m), so it
+                 // zeroed every CSV/joystick z command. 0 disables that rewrite.
+                 float cube_diagonal_length = 0.0f)
     : dt_(dt), num_lookahead_(num_lookahead_steps), vrp_height_(vrp_height),
       vrpx_offset_(vrpx_offset), vrpy_offset_(vrpy_offset),
       cube_diagonal_length_(cube_diagonal_length)
