@@ -65,14 +65,28 @@ REALISTIC_SMALL_FRAC = 0.5
 # 05. real robot stair experiment
 # Fixed per-step z scene (uncomment to use). Length must equal `step` (incl. stop).
 # x/y/yaw still come from --x/--y/--yaw (or RANGE_*). Example 10-step climb:
-SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.0]
-SCENE_X = [0.400, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0]
+# SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.0]
+# SCENE_X = [0.400, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0]
 # SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.00, -0.15, -0.15, -0.15, -0.158,  0.0, 0.0]
 # SCENE_X = [0.400, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0,  0.26,  0.26,  0.25,  0.25,  0.25, 0.0]
 # SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.0, 0.0, 0.0, -0.15, -0.15, -0.15, -0.158,  0.0, 0.0]
 # SCENE_X = [0.4, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0]
-# SCENE_Z = None
+
+# SCENE_X =   [0.1, 0.30, 0.30, 0.30, 0.30, 0.30, 0.3, 0.0]
+# SCENE_Z =   [0.0,-0.17,-0.17,-0.17,-0.17,-0.19, 0.0, 0.0]
+# SCENE_YAW = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+SCENE_X =   [0.1, 0.30, 0.30, 0.30, 0.30, 0.30, 0.3, 0.0]
+SCENE_Z =   [0.0, 0.19, 0.17, 0.17, 0.17, 0.17, 0.0, 0.0]
+SCENE_YAW = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# SCENE_X =   [0.1, 0.30, 0.30, 0.30, 0.30, 0.30, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.15,  0.30,  0.30,  0.30,  0.30,  0.30, 0.30, 0.0]
+# SCENE_Z =   [0.0, 0.19, 0.17, 0.17, 0.17, 0.17, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.17, -0.17, -0.17, -0.17, -0.19, 0.0, 0.0]
+# SCENE_YAW = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.628, 0.628, 0.628, 0.628, 0.628, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
 # SCENE_X = None
+# SCENE_Z = None
+# SCENE_YAW = None
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
 
@@ -110,7 +124,7 @@ def z_is_large(val, lo, hi, small_frac=REALISTIC_SMALL_FRAC):
 
 
 def build_rows(n, start, rx, ry, rz, ryaw, ssp, dsp, height, stop_last,
-               scene_z=None, scene_x=None, realistic=False):
+               scene_z=None, scene_x=None, scene_yaw=None, realistic=False):
     if scene_z is not None and len(scene_z) != n:
         raise ValueError(f"SCENE_Z length {len(scene_z)} != step {n}")
     rows = []
@@ -126,7 +140,8 @@ def build_rows(n, start, rx, ry, rz, ryaw, ssp, dsp, height, stop_last,
             step_x = float(scene_x[i])
             step_y = 0.237
             step_z = float(scene_z[i])
-            step_yaw = 0.0
+            # step_yaw = 0.0
+            step_yaw = float(scene_yaw[i])
         elif i == 0 and scene_z is None:
             step_x = 0.2
             step_y = 0.237
@@ -188,7 +203,7 @@ if __name__ == "__main__":
 
     rows = build_rows(args.step, args.start, args.x, args.y, args.z, args.yaw,
                       args.ssp, args.dsp, args.height, stop_last=not args.no_stop,
-                      scene_z=SCENE_Z, scene_x=SCENE_X, realistic=args.realistic)
+                      scene_z=SCENE_Z, scene_x=SCENE_X, scene_yaw=SCENE_YAW, realistic=args.realistic)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w", newline="") as f:
@@ -212,7 +227,7 @@ if __name__ == "__main__":
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py"),"--stair", "--size", "0.125", "0.5"])
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_shatters_obstacles.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_shatters_obstacles.py")])
 
 
 

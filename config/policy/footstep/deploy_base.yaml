@@ -112,10 +112,10 @@ footstep:
   # scene keyframe. Ignored when foot_state_source is sim_odom/mujoco, which
   # measure the spawn pose directly, and unused by command_source: goal, which
   # anchors on the robot's own stance at walk start.
-  # global_init_lfoot: [-0.01259,  0.1185, 0.03458, 0]
-  # global_init_rfoot: [-0.01259, -0.1185, 0.03458, 0]
-  global_init_lfoot: [-0.0,  0.1185, 0.03458, 0.0]
-  global_init_rfoot: [-0.0, -0.1185, 0.03458, 0.0]
+  global_init_lfoot: [-0.01259,  0.1185, 0.03458, 0]
+  global_init_rfoot: [-0.01259, -0.1185, 0.03458, 0]
+  # global_init_lfoot: [-0.0,  0.1185, 0.03458, 0.0]
+  # global_init_rfoot: [-0.0, -0.1185, 0.03458, 0.0]
   ranges:
     foot_pos_x: [-0.2, 0.2]
     foot_pos_y: [0.2, 0.4]

@@ -28,7 +28,8 @@ SIM_WAIT="${SIM_WAIT:-2}"   # seconds to let the simulator come up before the co
 
 # Overrides unitree_mujoco/simulate/config.yaml (no need to edit that file).
 ROBOT="g1"
-SCENE="scene_29dof_footstep.xml"
+# SCENE="scene_29dof_footstep.xml"
+SCENE="scene_29dof_stair.xml"
 
 # --- sanity checks ---------------------------------------------------------
 [[ -x "$MUJOCO_DIR/$MUJOCO_BIN" ]] || { echo "[run] missing simulator: $MUJOCO_DIR/$MUJOCO_BIN" >&2; exit 1; }
