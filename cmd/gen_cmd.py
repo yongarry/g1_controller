@@ -41,7 +41,7 @@ DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 # RANGE_YAW = (-0.5, 0.5)   # per-step turn [rad]
 # NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
-# 02. 3d random footstep sampling 
+# # 02. 3d random footstep sampling 
 RANGE_X = (0.2, 0.4)     # forward step length [m]
 RANGE_Y = (0.2, 0.4)      # lateral step width (positive magnitude) [m]
 RANGE_Z = (-0.15, 0.2)   # per-step height change [m]
@@ -76,17 +76,17 @@ REALISTIC_SMALL_FRAC = 0.5
 # SCENE_Z =   [0.0,-0.17,-0.17,-0.17,-0.17,-0.19, 0.0, 0.0]
 # SCENE_YAW = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-SCENE_X =   [0.2, 0.30, 0.30, 0.30, 0.30, 0.30, 0.3, 0.0]
-SCENE_Z =   [0.0, 0.19, 0.17, 0.17, 0.17, 0.17, 0.0, 0.0]
-SCENE_YAW = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+# SCENE_X =   [0.2, 0.30, 0.30, 0.30, 0.30, 0.30, 0.3, 0.0]
+# SCENE_Z =   [0.0, 0.19, 0.17, 0.17, 0.17, 0.17, 0.0, 0.0]
+# SCENE_YAW = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # SCENE_X =   [0.1, 0.30, 0.30, 0.30, 0.30, 0.30, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.15,  0.30,  0.30,  0.30,  0.30,  0.30, 0.30, 0.0]
 # SCENE_Z =   [0.0, 0.19, 0.17, 0.17, 0.17, 0.17, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.17, -0.17, -0.17, -0.17, -0.19, 0.0, 0.0]
 # SCENE_YAW = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.628, 0.628, 0.628, 0.628, 0.628, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-# SCENE_X = None
-# SCENE_Z = None
-# SCENE_YAW = None
+SCENE_X = None
+SCENE_Z = None
+SCENE_YAW = None
 
 HEADER = ["foot", "step_x", "step_y", "step_z", "step_yaw", "ssp_t", "dsp_t", "height"]
 
@@ -182,7 +182,7 @@ if __name__ == "__main__":
                    metavar=("MIN", "MAX"), help="step_z range [m]")
     p.add_argument("--yaw", nargs=2, type=float, default=list(RANGE_YAW),
                    metavar=("MIN", "MAX"), help="step_yaw range [rad]")
-    p.add_argument("--ssp", type=float, default=0.8, help="single support time [s]")
+    p.add_argument("--ssp", type=float, default=0.7, help="single support time [s]")
     p.add_argument("--dsp", type=float, default=0.15, help="double support time [s]")
     p.add_argument("--height", type=float, default=0.07, help="swing apex height [m]")
     p.add_argument("--no-stop", action="store_true",
@@ -224,7 +224,7 @@ if __name__ == "__main__":
 
 
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
-    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py"),"--stair", "--size", "0.125", "0.5"])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_shatters_obstacles.py")])
