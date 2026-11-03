@@ -110,7 +110,7 @@ gait:
   # gait_process advances by step_dt * f, so a full cycle is 1/f = 1.0 s and each
   # foothold (half cycle) takes 0.5 s. Changing this desynchronizes the policy
   # from the gait clock it was trained on.
-  gait_frequency: 0.9
+  gait_frequency: 1.0
   stop_steps: 4          # half-steps to settle (joystick release, or CSV plan end)
   vert_max: 0.5          # [m] xy_distance_range max
   lat_max: 0.3           # [m] joystick full stick lateral

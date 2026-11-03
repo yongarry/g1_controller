@@ -29,10 +29,14 @@
 import argparse
 import math
 import os
+import sys
 
 import yaml
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _THIS_DIR)
+from gen_footstep_scene import check_markers, write_scene, yaw_to_quat
+
 _PROJ_DIR = os.path.dirname(_THIS_DIR)
 _G1_DIR = os.path.join(
     os.path.dirname(_PROJ_DIR), "unitree_mujoco", "unitree_robots", "g1"
@@ -115,7 +119,8 @@ def build_markers(points, reach_radius, pole_height):
         length = reach_radius * 1.5
         cx, cy = x + 0.5 * length * math.cos(yaw), y + 0.5 * length * math.sin(yaw)
         tx, ty = x + length * math.cos(yaw), y + length * math.sin(yaw)
-        qw, qz = math.cos(yaw / 2.0), math.sin(yaw / 2.0)
+        qw, _, _, qz = yaw_to_quat(yaw)
+        tw, _, _, tz = yaw_to_quat(yaw + math.pi / 4)
         lines.append(
             f'    <geom name="goal_yaw_{i:02d}" type="box" '
             f'size="{length * 0.5:.4f} 0.0150 0.0020" pos="{cx:.4f} {cy:.4f} 0.0030" '
@@ -125,14 +130,14 @@ def build_markers(points, reach_radius, pole_height):
         lines.append(
             f'    <geom name="goal_yaw_tip_{i:02d}" type="box" '
             f'size="0.0500 0.0500 0.0020" pos="{tx:.4f} {ty:.4f} 0.0030" '
-            f'quat="{math.cos((yaw + math.pi / 4) / 2.0):.6f} 0 0 '
-            f'{math.sin((yaw + math.pi / 4) / 2.0):.6f}" '
+            f'quat="{tw:.6f} 0 0 {tz:.6f}" '
             f'contype="0" conaffinity="0" group="2" rgba="{rgba}"/>'
         )
     return f"    {BEGIN_MARK}\n" + "\n".join(lines) + f"\n    {END_MARK}"
 
 
 def inject(xml_text, block):
+    check_markers(xml_text, BEGIN_MARK, END_MARK)
     b = xml_text.find(BEGIN_MARK)
     e = xml_text.find(END_MARK)
     if b != -1 and e != -1:
@@ -169,8 +174,7 @@ if __name__ == "__main__":
     source = args.xml if os.path.exists(args.xml) else args.base
     with open(source) as f:
         xml_text = f.read()
-    with open(args.xml, "w") as f:
-        f.write(inject(xml_text, build_markers(points, reach_radius, args.pole_height)))
+    write_scene(args.xml, inject(xml_text, build_markers(points, reach_radius, args.pole_height)))
 
     print(f"Read {len(points)} goal points from {deploy_path}")
     for i, (x, y, yaw) in enumerate(points):

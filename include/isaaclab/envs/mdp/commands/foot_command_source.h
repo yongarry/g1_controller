@@ -81,14 +81,13 @@ public:
     virtual ~FootCommandSource() = default;
     // Nominal command for the current tick (read every control tick).
     virtual FootCommandInput input() = 0;
-    // Called once when a footstep completes (step boundary). No-op by default.
-    virtual void advance() {}
+    // Whole scripted plan, one row per footstep (empty for an operator-driven
+    // source). The planner builds each lookahead slot from its own row.
+    virtual std::vector<FootCommandInput> plan() const { return {}; }
     // Number of commands in a scripted (finite) source, 0 for an operator-driven
     // one. A scripted source needs no aiming, so the caller starts walking on
     // state entry instead of waiting for the operator, and stops once this many
-    // footsteps have been completed. Counting completed steps rather than the
-    // read cursor keeps this exact: the cursor runs ahead by the planner's
-    // lookahead, so it is already at the last row while two steps still remain.
+    // footsteps have been completed.
     virtual int size() const { return 0; }
     // Initial swing-foot phase (0: right swings first, 1: left swings first).
     virtual int start_phase_indicator() const { return 0; }
@@ -139,7 +138,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// CSV source (replays footcommands.csv in order, advancing per completed step)
+// CSV source (replays footcommands.csv in order; the planner indexes plan())
 // ---------------------------------------------------------------------------
 class CSVFootCommandSource : public FootCommandSource
 {
@@ -152,27 +151,8 @@ public:
                      rows_.size(), path, labels_.front());
     }
 
-    FootCommandInput input() override
-    {
-        return rows_[std::min(cursor_, (int)rows_.size() - 1)];
-    }
-
-    void advance() override
-    {
-        if (cursor_ + 1 < (int)rows_.size())
-        {
-            ++cursor_;
-            const auto& r = rows_[cursor_];
-            spdlog::info("[FootCommand/CSV] step {}/{} (foot={}, x={:.3f} y={:.3f} z={:.3f} yaw={:.3f})",
-                         cursor_ + 1, rows_.size(), labels_[cursor_],
-                         r.step_x, r.step_y, r.step_z, r.step_yaw);
-        }
-        else if (!end_logged_)
-        {
-            end_logged_ = true;
-            spdlog::info("[FootCommand/CSV] reached end ({} steps); holding last command.", rows_.size());
-        }
-    }
+    FootCommandInput input() override { return rows_.front(); }
+    std::vector<FootCommandInput> plan() const override { return rows_; }
 
     int size() const override { return (int)rows_.size(); }
 
@@ -231,10 +211,10 @@ private:
             try {
                 size_t pos = 0;
                 float v = std::stof(s, &pos);
-                if (std::isnan(v)) throw std::runtime_error("NaN");
+                if (!std::isfinite(v) || pos != s.size()) throw std::runtime_error("bad value");
                 return v;
             } catch (const std::exception&) {
-                throw std::runtime_error("CSVFootCommandSource: invalid/NaN value for '" + name +
+                throw std::runtime_error("CSVFootCommandSource: invalid/non-finite value for '" + name +
                                          "' at line " + std::to_string(line_no) + " in " + path);
             }
         };
@@ -294,9 +274,7 @@ private:
     std::vector<std::string> labels_;
     std::vector<int> phases_;
     FootCommandInput def_;
-    int cursor_ = 0;
     int start_phase_ = 0;
-    bool end_logged_ = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -360,7 +338,13 @@ inline std::vector<GlobalFootTarget> load_global_foot_plan(const std::string& pa
                                      std::to_string(line_no) + " in " + path);
 
         auto get_f = [&](const std::string& name) -> float {
-            try { return std::stof(cells[col[name]]); }
+            try {
+                const std::string& s = cells[col[name]];
+                size_t pos = 0;
+                const float v = std::stof(s, &pos);
+                if (!std::isfinite(v) || pos != s.size()) throw std::runtime_error("bad value");
+                return v;
+            }
             catch (const std::exception&) {
                 throw std::runtime_error("load_global_foot_plan: invalid value for '" + name +
                                          "' at line " + std::to_string(line_no) + " in " + path);

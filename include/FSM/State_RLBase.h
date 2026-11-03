@@ -4,6 +4,7 @@
 #pragma once
 
 #include "FSMState.h"
+#include <atomic>
 #include "isaaclab/envs/mdp/actions/joint_actions.h"
 #include "isaaclab/envs/mdp/terminations.h"
 
@@ -25,6 +26,7 @@ public:
 
         env->robot->update();
         // Start policy thread
+        policy_ready_ = false;
         policy_thread_running = true;
         policy_thread = std::thread([this]{
             using clock = std::chrono::high_resolution_clock;
@@ -38,6 +40,7 @@ public:
             while (policy_thread_running)
             {
                 env->step();
+                policy_ready_ = true;
 
                 // Sleep
                 std::this_thread::sleep_until(sleepTill);
@@ -60,7 +63,9 @@ private:
     std::unique_ptr<isaaclab::ManagerBasedRLEnv> env;
 
     std::thread policy_thread;
-    bool policy_thread_running = false;
+    std::atomic<bool> policy_thread_running{false};
+    // run() keeps the previous state's targets until the policy has acted once.
+    std::atomic<bool> policy_ready_{false};
 };
 
 REGISTER_FSM(State_RLBase)

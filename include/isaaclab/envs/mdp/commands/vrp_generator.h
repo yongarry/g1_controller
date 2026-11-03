@@ -31,16 +31,9 @@ class VrpGenerator
 {
 public:
     VrpGenerator(float vrp_length, float dt, int num_lookahead_steps, float vrp_height,
-                 float vrpx_offset = 0.03f, float vrpy_offset = 0.02f,
-                 // Tocabi stepping-stone leftover: if XY travel of the swing foot
-                 // was under the cube diagonal, commanded step_z was replaced with
-                 // the current swing-foot height (or inverted for lookahead). The
-                 // 0.361 m threshold is larger than a G1 step (~0.2–0.3 m), so it
-                 // zeroed every CSV/joystick z command. 0 disables that rewrite.
-                 float cube_diagonal_length = 0.0f)
+                 float vrpx_offset = 0.03f, float vrpy_offset = 0.02f)
     : dt_(dt), num_lookahead_(num_lookahead_steps), vrp_height_(vrp_height),
-      vrpx_offset_(vrpx_offset), vrpy_offset_(vrpy_offset),
-      cube_diagonal_length_(cube_diagonal_length)
+      vrpx_offset_(vrpx_offset), vrpy_offset_(vrpy_offset)
     {
         NL_ = static_cast<int>(vrp_length / dt_);
         vrp_ref_firststance.assign(NL_, math::Vec3::Zero());
@@ -92,10 +85,6 @@ public:
         stance[0][2] = vrp_height_ + com_z[0];
         swing[0][0] = stance[0][0] + step_x[0];
         swing[0][1] = stance[0][1] + step_y[0];
-        {
-            const float d = std::hypot(swing[0][0] - swing_foot_start[0], swing[0][1] - swing_foot_start[1]);
-            if (d < cube_diagonal_length_) step_z[0] = swing_foot_start[2];
-        }
         // h_0 + delta_h_2 + (com_z[1] - com_z[0])
         swing[0][2] = stance[0][2] + step_z[0] + (com_z[1] - com_z[0]);
         swing[0][3] = stance[0][3] + step_yaw[0];
@@ -108,12 +97,6 @@ public:
             swing[s][0] = stance[s][0] + c * step_x[s] - sn * step_y[s];
             swing[s][1] = stance[s][1] + sn * step_x[s] + c * step_y[s];
             // swing[s][2] = stance[s][2] + com_z[s + 1];
-            float d;
-            if (s == 1)
-                d = std::hypot(swing[s][0], swing[s][1]);
-            else
-                d = std::hypot(swing[s][0] - stance[s - 2][0], swing[s][1] - stance[s - 2][1]);
-            if (d < cube_diagonal_length_) step_z[s] = -step_z[s - 1];
             swing[s][2] = stance[s][2] + step_z[s] + (com_z[s + 1] - com_z[s]);
             swing[s][3] = stance[s][3] + step_yaw[s];
         }
@@ -324,7 +307,7 @@ public:
     std::vector<math::Vec3> vrp_ref_firststance;       // NL
     std::vector<float> CoM_yaw_ref_firststance;        // NL
     std::vector<float> CoM_yawvel_ref_firststance;     // NL
-    std::vector<float> step_z;                         // num_lookahead (overlap-adjusted)
+    std::vector<float> step_z;                         // num_lookahead
     // heuristic CoM reference (only filled by generate_com_heuristic_online*)
     std::vector<math::Vec3> com_ref_firststance_heuristic;    // NL
     std::vector<math::Vec3> com_refvel_firststance_heuristic; // NL
@@ -349,7 +332,7 @@ private:
     float dt_;
     int num_lookahead_;
     float vrp_height_;
-    float vrpx_offset_, vrpy_offset_, cube_diagonal_length_;
+    float vrpx_offset_, vrpy_offset_;
     int NL_;
 
     // cached by generate_vrp_online for the heuristic CoM generators

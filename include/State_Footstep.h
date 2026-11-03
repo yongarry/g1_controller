@@ -35,7 +35,8 @@ public:
     {
         policy_thread_running = false;
         if (policy_thread.joinable()) policy_thread.join();
-        if (log_file_.is_open()) log_file_.close();
+        // Opened once in the constructor, so keep it open for the next entry.
+        if (log_file_.is_open()) log_file_.flush();
         if (eval_file_.is_open()) eval_file_.close();
     }
 
@@ -86,7 +87,8 @@ private:
     float joy_yaw_scale_ = 0.2f;
 
     std::thread policy_thread;
-    bool policy_thread_running = false;
+    std::atomic<bool> policy_thread_running{false};
+    std::atomic<bool> policy_ready_{false}; // first env->step() done since enter()
 
     // Set by run() on the Y button; the policy thread stands still (standby)
     // until it flips, then resets the planner and starts walking.

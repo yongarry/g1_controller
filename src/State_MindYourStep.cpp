@@ -202,7 +202,7 @@ void State_MindYourStep::open_eval_file(const std::string& path)
     }
     eval_file_ << std::fixed << std::setprecision(6);
     // Same schema as State_Footstep so cmd/eval_footstep.py can pool both.
-    // MindYourStep does not track landing z; write 0 for cmd/meas/err z.
+    // z is the commanded step_z vs. FK swing-foot height in the stance yaw frame.
     eval_file_ << "step,foot,"
                   "cmd_x,cmd_y,cmd_z,cmd_yaw,"
                   "meas_x,meas_y,meas_z,meas_yaw,"
@@ -212,21 +212,23 @@ void State_MindYourStep::open_eval_file(const std::string& path)
     spdlog::info("[MysEval] per-step tracking error -> '{}'.", stamped.string());
 }
 
-void State_MindYourStep::write_eval_row(float meas_x, float meas_y, float meas_yaw)
+void State_MindYourStep::write_eval_row(float meas_x, float meas_y, float meas_z, float meas_yaw)
 {
     if (!eval_enabled_) return;
     const float cmd_x = gait_->last_cmd_x();
     const float cmd_y = gait_->last_cmd_y();
+    const float cmd_z = gait_->last_cmd_z();
     const float cmd_yaw = gait_->last_cmd_yaw();
     const float err_x = cmd_x - meas_x;
     const float err_y = cmd_y - meas_y;
+    const float err_z = cmd_z - meas_z;
     const float err_yaw = isaaclab::math::wrap_to_pi(cmd_yaw - meas_yaw);
 
     eval_file_ << gait_->step_counter() << ","
                << (gait_->last_step_swing_right() ? "R" : "L") << ","
-               << cmd_x << "," << cmd_y << "," << 0.0f << "," << cmd_yaw << ","
-               << meas_x << "," << meas_y << "," << 0.0f << "," << meas_yaw << ","
-               << err_x << "," << err_y << "," << 0.0f << "," << err_yaw << ","
+               << cmd_x << "," << cmd_y << "," << cmd_z << "," << cmd_yaw << ","
+               << meas_x << "," << meas_y << "," << meas_z << "," << meas_yaw << ","
+               << err_x << "," << err_y << "," << err_z << "," << err_yaw << ","
                << gait_->last_ssp_t() << "," << gait_->last_dsp_t() << ","
                << gait_->last_height() << "\n";
     eval_file_.flush();
@@ -253,6 +255,7 @@ void State_MindYourStep::enter()
         lowcmd->msg_.motor_cmd()[sdk].tau() = 0;
     }
 
+    policy_ready_ = false;
     policy_thread_running = true;
     policy_thread = std::thread([this]{
         using clock = std::chrono::high_resolution_clock;
@@ -277,21 +280,24 @@ void State_MindYourStep::enter()
         };
 
         // Measure swing foot in the stance-foot yaw frame (same frame as cmd_*).
+        // FK is pelvis-frame; rotate by the IMU quat first, as FootstepCommand does.
         auto measure_landing = [&](int swing /*0 L, 1 R*/,
-                                   float& mx, float& my, float& myaw) {
+                                   float& mx, float& my, float& mz, float& myaw) {
             using Side = isaaclab::Kinematics::Side;
             const Side sw = (swing == 0) ? Side::LEFT : Side::RIGHT;
             const Side st = (swing == 0) ? Side::RIGHT : Side::LEFT;
-            const auto st_pos = kin_->foot_pos(st);
-            const auto st_yaw_q = isaaclab::math::yaw_quat(kin_->foot_quat(st));
-            const auto sw_pos = kin_->foot_pos(sw);
-            const auto sw_quat = kin_->foot_quat(sw);
+            const isaaclab::math::Quat R = env->robot->data.root_quat_w;
+            const auto st_pos = isaaclab::math::quat_apply(R, kin_->foot_pos(st));
+            const auto st_yaw_q = isaaclab::math::yaw_quat(isaaclab::math::quat_mul(R, kin_->foot_quat(st)));
+            const auto sw_pos = isaaclab::math::quat_apply(R, kin_->foot_pos(sw));
+            const auto sw_quat = isaaclab::math::quat_mul(R, kin_->foot_quat(sw));
             isaaclab::math::Vec3 t12;
             isaaclab::math::Quat q12;
             isaaclab::math::subtract_frame_transforms(
                 st_pos, st_yaw_q, sw_pos, sw_quat, t12, q12);
             mx = t12[0];
             my = t12[1];
+            mz = t12[2];
             myaw = isaaclab::math::wrap_to_pi(
                 isaaclab::math::euler_xyz_from_quat(q12)[2]);
         };
@@ -315,9 +321,9 @@ void State_MindYourStep::enter()
 
             if (gait_->step_completed())
             {
-                float mx = 0, my = 0, myaw = 0;
-                if (kin_) measure_landing(gait_->last_step_swing_right() ? 1 : 0, mx, my, myaw);
-                write_eval_row(mx, my, myaw);
+                float mx = 0, my = 0, mz = 0, myaw = 0;
+                if (kin_) measure_landing(gait_->last_step_swing_right() ? 1 : 0, mx, my, mz, myaw);
+                write_eval_row(mx, my, mz, myaw);
                 const float ex = gait_->last_cmd_x() - mx;
                 const float ey = gait_->last_cmd_y() - my;
                 spdlog::info("[MysEval] step {} foot={} |xy|={:.4f} m  "
@@ -331,6 +337,7 @@ void State_MindYourStep::enter()
             }
 
             env->step();
+            policy_ready_ = true;
 
             if (!gait_->csv_mode() && gait_->move_dir() != last_dir)
             {
@@ -346,6 +353,7 @@ void State_MindYourStep::enter()
 
 void State_MindYourStep::run()
 {
+    if (!policy_ready_) return; // keep the previous state's targets until the policy has acted once
     auto action = env->action_manager->processed_actions();
     for (int i = 0; i < (int)env->robot->data.joint_ids_map.size(); ++i)
     {

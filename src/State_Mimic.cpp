@@ -146,7 +146,7 @@ State_Mimic::State_Mimic(int state_mode, std::string state_string)
     const auto & joy = FSMState::lowstate->joystick;
     this->registered_checks.emplace_back(
         std::make_pair(
-            [&]()->bool{ return (env->episode_length * env->step_dt) > time_range_[1]; }, // time out
+            [&]()->bool{ return env->episode_length * env->step_dt + time_range_[0] > time_range_[1]; }, // time out
             FSMStringMap.right.at("Velocity")
         )
     );
@@ -172,6 +172,7 @@ void State_Mimic::enter()
     motion = motion_; // set for specific motion
     env->reset();
     // Start policy thread
+    policy_ready_ = false;
     policy_thread_running = true;
     policy_thread = std::thread([this]{
         using clock = std::chrono::high_resolution_clock;
@@ -193,6 +194,7 @@ void State_Mimic::enter()
             env->robot->update();
             motion->update(env->episode_length * env->step_dt + time_range_[0]);
             env->step();
+            policy_ready_ = true;
 
             // Sleep
             std::this_thread::sleep_until(sleepTill);
@@ -204,6 +206,7 @@ void State_Mimic::enter()
 
 void State_Mimic::run()
 {
+    if (!policy_ready_) return; // keep the previous state's targets until the policy has acted once
     auto action = env->action_manager->processed_actions();
     for(int i(0); i < env->robot->data.joint_ids_map.size(); i++) {
         lowcmd->msg_.motor_cmd()[env->robot->data.joint_ids_map[i]].q() = action[i];

@@ -23,6 +23,7 @@
 #   python3 cmd/gen_cmd.py 8 --no-stop -o /tmp/fc.csv
 #   python3 cmd/gen_cmd.py 10 --real              # real robot: skip MuJoCo terrain XML
 #   python3 cmd/gen_cmd.py 10 --realistic         # no two consecutive large xyz steps
+#   python3 cmd/gen_cmd.py 10 --com-z 0.02        # hold a +2 cm CoM offset on every step
 
 import argparse
 import csv
@@ -185,6 +186,9 @@ if __name__ == "__main__":
     p.add_argument("--ssp", type=float, default=0.7, help="single support time [s]")
     p.add_argument("--dsp", type=float, default=0.15, help="double support time [s]")
     p.add_argument("--height", type=float, default=0.07, help="swing apex height [m]")
+    p.add_argument("--com-z", type=float, default=0.01,
+                   help="CoM height offset [m] written to every row; 0 leaves the "
+                        "com_z column out entirely")
     p.add_argument("--no-stop", action="store_true",
                    help="do not force the last step to be a stop step")
     p.add_argument("--real", action="store_true",
@@ -205,10 +209,18 @@ if __name__ == "__main__":
                       args.ssp, args.dsp, args.height, stop_last=not args.no_stop,
                       scene_z=SCENE_Z, scene_x=SCENE_X, scene_yaw=SCENE_YAW, realistic=args.realistic)
 
+    # com_z is optional for both the C++ loader and the global converter, so the
+    # column only appears when it actually carries a value.
+    header = list(HEADER)
+    if args.com_z != 0.0:
+        header.append("com_z")
+        for r in rows:
+            r.append(f"{args.com_z:.3f}")
+
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(HEADER)
+        w.writerow(header)
         w.writerows(rows)
 
     print(f"Wrote {len(rows)} footsteps to {args.output} "
@@ -217,15 +229,15 @@ if __name__ == "__main__":
     
     # execute convert_footcommand_2_global.py to generate footcommands_global.csv
     import subprocess
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "convert_footcommand_2_global.py"), "--input", args.output, "--output", os.path.join(_PROJ_DIR, "config", "footcommands_global.csv")])  
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "convert_footcommand_2_global.py"), "--input", args.output, "--output", os.path.join(_PROJ_DIR, "config", "footcommands_global.csv")], check=True)
 
     # execute gen_footstep_scene.py to generate footstep cubes in the MuJoCo scene XML
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "convert2mys.py")])
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "convert2mys.py"), "--input", args.output], check=True)
 
 
-    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")])
-    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
-    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_footstep_scene.py")], check=True)
+    # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_rocky_mountain.py")])
+    subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py")])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_aruco_footstep_scene.py"),"--stair", "--size", "0.125", "0.5"])
     # subprocess.run(["python3", os.path.join(_THIS_DIR, "gen_shatters_obstacles.py")])
 

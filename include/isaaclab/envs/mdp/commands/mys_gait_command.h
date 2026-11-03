@@ -77,8 +77,6 @@ public:
     }
 
     bool csv_mode() const { return csv_mode_; }
-    int plan_size() const { return (int)steps_.size(); }
-    bool plan_done() const { return csv_mode_ && plan_done_; }
 
     // True on the tick a scripted foothold just completed (landing evaluated).
     bool step_completed() const { return step_completed_; }
@@ -86,17 +84,11 @@ public:
     bool last_step_swing_right() const { return last_swing_ == 1; }
     float last_cmd_x() const { return last_cmd_x_; }
     float last_cmd_y() const { return last_cmd_y_; }
+    float last_cmd_z() const { return last_cmd_z_; }
     float last_cmd_yaw() const { return last_cmd_yaw_; }
     float last_ssp_t() const { return last_ssp_; }
     float last_dsp_t() const { return last_dsp_; }
     float last_height() const { return last_height_; }
-    // Active command (stance-frame) while a step is in progress; used by the
-    // state to form landing error against FK when step_completed() is true.
-    float active_cmd_x() const { return active_cmd_x_; }
-    float active_cmd_y() const { return active_cmd_y_; }
-    float active_cmd_yaw() const { return active_cmd_yaw_; }
-    int active_swing() const { return active_swing_; } // foot that just landed
-    bool has_active_step() const { return has_active_; }
 
     void reset()
     {
@@ -112,7 +104,6 @@ public:
         step_counter_ = 0;
         step_completed_ = false;
         plan_done_ = false;
-        end_logged_ = false;
         has_active_ = false;
         set_offsets_(still_offsets_());
         cmd_[14] = 0.0f;
@@ -152,7 +143,7 @@ public:
     }
 
     // Call once per policy tick. When a foothold completes, step_completed() is
-    // true for that tick and active_cmd_* hold the command that just finished
+    // true for that tick and last_cmd_* hold the command that just finished
     // so the caller can measure the landing and write the eval row.
     void compute()
     {
@@ -162,12 +153,11 @@ public:
         if (gait_process_ < 0.0) gait_process_ += 1.0;
         const int swing = (gait_process_ < 0.5) ? 0 : 1;
         const bool sample_goal = (swing != swing_foot_idx_);
-        const int completed_swing = swing_foot_idx_; // foot that just finished
         swing_foot_idx_ = swing;
 
         if (csv_mode_)
         {
-            compute_csv_(sample_goal, completed_swing);
+            compute_csv_(sample_goal);
             return;
         }
 
@@ -213,8 +203,6 @@ public:
 
     const std::array<float, 16>& command() const { return cmd_; }
 
-    double gait_process() const { return gait_process_; }
-    int swing_foot_idx() const { return swing_foot_idx_; }
     Move move_dir() const { return move_dir_; }
     static const char* move_name(Move m)
     {
@@ -263,7 +251,7 @@ private:
         return o;
     }
 
-    void compute_csv_(bool sample_goal, int completed_swing)
+    void compute_csv_(bool sample_goal)
     {
         if (sample_goal)
         {
@@ -273,6 +261,7 @@ private:
                 last_swing_ = active_swing_;
                 last_cmd_x_ = active_cmd_x_;
                 last_cmd_y_ = active_cmd_y_;
+                last_cmd_z_ = active_cmd_z_;
                 last_cmd_yaw_ = active_cmd_yaw_;
                 last_ssp_ = active_ssp_;
                 last_dsp_ = active_dsp_;
@@ -280,7 +269,6 @@ private:
                 ++step_counter_;
                 step_completed_ = true;
                 has_active_ = false;
-                (void)completed_swing;
             }
 
             if (cursor_ < (int)steps_.size())
@@ -296,6 +284,7 @@ private:
                 active_swing_ = s.swing;
                 active_cmd_x_ = s.step_x;
                 active_cmd_y_ = signed_y_(s.swing, s.step_y);
+                active_cmd_z_ = s.step_z;
                 active_cmd_yaw_ = s.step_yaw;
                 active_ssp_ = s.ssp_t;
                 active_dsp_ = s.dsp_t;
@@ -317,12 +306,8 @@ private:
                 {
                     plan_done_ = true;
                     gaits_to_still_ = cfg_.stop_steps;
-                    if (!end_logged_)
-                    {
-                        end_logged_ = true;
-                        spdlog::info("[MysGait/CSV] plan complete after {} steps; settling {} half-steps.",
-                                     step_counter_, cfg_.stop_steps);
-                    }
+                    spdlog::info("[MysGait/CSV] plan complete after {} steps; settling {} half-steps.",
+                                 step_counter_, cfg_.stop_steps);
                 }
                 set_offsets_(still_offsets_());
                 if (gaits_to_still_ > 0)
@@ -510,7 +495,6 @@ private:
         }
         if (steps_.empty())
             throw std::runtime_error("MysGaitCommand: no data rows in " + path);
-        end_logged_ = false;
     }
 
     Config cfg_;
@@ -530,17 +514,16 @@ private:
     std::vector<StepCmd> steps_;
     int cursor_ = 0;
     bool plan_done_ = false;
-    bool end_logged_ = false;
     bool step_completed_ = false;
     int step_counter_ = 0;
 
     bool has_active_ = false;
     int active_swing_ = 0;
-    float active_cmd_x_ = 0, active_cmd_y_ = 0, active_cmd_yaw_ = 0;
+    float active_cmd_x_ = 0, active_cmd_y_ = 0, active_cmd_z_ = 0, active_cmd_yaw_ = 0;
     float active_ssp_ = 0.7f, active_dsp_ = 0.15f, active_height_ = 0.08f;
 
     int last_swing_ = 0;
-    float last_cmd_x_ = 0, last_cmd_y_ = 0, last_cmd_yaw_ = 0;
+    float last_cmd_x_ = 0, last_cmd_y_ = 0, last_cmd_z_ = 0, last_cmd_yaw_ = 0;
     float last_ssp_ = 0.7f, last_dsp_ = 0.15f, last_height_ = 0.08f;
 };
 

@@ -111,14 +111,7 @@ public:
             model_, data_, s == LEFT ? lee_fid_ : ree_fid_, pinocchio::LOCAL_WORLD_ALIGNED);
         return vel.linear().cast<float>();
     }
-    math::Vec3 foot_ang_vel(Side s) const
-    {
-        auto vel = pinocchio::getFrameVelocity(
-            model_, data_, s == LEFT ? lee_fid_ : ree_fid_, pinocchio::LOCAL_WORLD_ALIGNED);
-        return vel.angular().cast<float>();
-    }
     math::Vec3 com_pos() const { return data_.com[0].cast<float>(); }
-    math::Vec3 com_vel() const { return data_.vcom[0].cast<float>(); }
 
     // Current leg joint angles (6) in the configured leg-joint order.
     Eigen::VectorXf leg_q(Side s) const
@@ -149,9 +142,15 @@ public:
         pinocchio::Data& data = ik_data_;
         const double lam2 = static_cast<double>(lambda) * static_cast<double>(lambda);
 
+        // Allocated once per call, not per iteration.
+        pinocchio::Data::Matrix6x Jfull = pinocchio::Data::Matrix6x::Zero(6, model_.nv);
+        Eigen::Matrix<double, 6, Eigen::Dynamic> J(6, n);
+        Eigen::Matrix<double, Eigen::Dynamic, 1> dq(n);
+
         for (int it = 0; it < iters; ++it)
         {
-            pinocchio::forwardKinematics(model_, data, q);
+            // computeJointJacobians also runs the forward kinematics.
+            pinocchio::computeJointJacobians(model_, data, q);
             pinocchio::updateFramePlacements(model_, data);
             const auto& M = data.oMf[fid];
 
@@ -173,19 +172,16 @@ public:
             err.tail<3>() = rot_err;
 
             // Full-model frame Jacobian (6 x nv), LOCAL_WORLD_ALIGNED: [linear; angular]
-            pinocchio::Data::Matrix6x Jfull(6, model_.nv);
             Jfull.setZero();
-            pinocchio::computeJointJacobians(model_, data, q);
             pinocchio::getFrameJacobian(model_, data, fid, pinocchio::LOCAL_WORLD_ALIGNED, Jfull);
 
             // restrict to leg columns
-            Eigen::Matrix<double, 6, Eigen::Dynamic> J(6, n);
             for (int i = 0; i < n; ++i) J.col(i) = Jfull.col(idx[i]);
 
             // DLS:  dq = J^T (J J^T + lam^2 I)^-1 err
             Eigen::Matrix<double, 6, 6> JJt = J * J.transpose();
             JJt.diagonal().array() += lam2;
-            Eigen::Matrix<double, Eigen::Dynamic, 1> dq = J.transpose() * JJt.ldlt().solve(err);
+            dq.noalias() = J.transpose() * JJt.ldlt().solve(err);
 
             for (int i = 0; i < n; ++i) q(idx[i]) += dq(i);
         }

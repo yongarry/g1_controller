@@ -18,7 +18,13 @@ void init_fsm_state()
     {
         spdlog::critical("The other process is using the lowcmd channel, please close it first.");
         unitree::robot::go2::shutdown();
-        // exit(0);
+        // shutdown() only releases Unitree's own controller; another user process keeps publishing.
+        usleep(1.5 * 1e6); // isTimeout() needs >1 s without messages
+        if(!lowcmd_sub->isTimeout())
+        {
+            spdlog::critical("lowcmd is still being published by another process. Exiting.");
+            exit(1);
+        }
     }
     FSMState::lowcmd = std::make_unique<LowCmd_t>();
     FSMState::lowstate = std::make_shared<LowState_t>();

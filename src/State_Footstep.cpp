@@ -336,6 +336,12 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
             vc.min_forward = yaml_get(vn, "min_forward", vc.min_forward);
             vc.exclude_radius = yaml_get(vn, "exclude_radius", vc.exclude_radius);
             vc.side_margin = yaml_get(vn, "side_margin", vc.side_margin);
+            if (vn["target_offset"])
+            {
+                const auto o = vn["target_offset"].as<std::vector<float>>();
+                if (o.size() != 3) throw std::runtime_error("footstep.vision.target_offset needs [x, y, z].");
+                vc.target_offset = isaaclab::math::Vec3(o[0], o[1], o[2]);
+            }
         }
         // Optional hand-eye extrinsic (D435i camera_link in the head_link
         // frame); defaults to the official URDF mount otherwise.
@@ -375,6 +381,7 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         command_ = std::make_unique<isaaclab::FootstepCommand>(fcfg, kin_);
         State_Footstep::command = command_.get(); // visible to obs terms before env build
         command_->set_input(command_source_->input());
+        command_->set_local_plan(command_source_->plan());
     }
 
     if (use_mujoco_foot_)
@@ -599,6 +606,8 @@ void State_Footstep::enter()
         lowcmd->msg_.motor_cmd()[sdk].tau() = 0;
     }
 
+    command_->clear_standby(); // re-entry: re-solve the standby IK from the current pose
+    policy_ready_ = false;
     policy_thread_running = true;
     policy_thread = std::thread([this]{
         using clock = std::chrono::high_resolution_clock;
@@ -782,8 +791,6 @@ void State_Footstep::enter()
             if (mode == Mode::WALKING)
             {
                 command_->compute();
-                // advance the (csv) command source when a footstep completes
-                if (command_source_ && command_->step_completed()) command_source_->advance();
                 // per-step landing error report (mirrors tocabi cc.cpp)
                 if (command_->step_completed())
                 {
@@ -832,6 +839,7 @@ void State_Footstep::enter()
                     // Plan finished: stop on the foot that just landed and hold
                     // the default pose rather than marching in place forever.
                     mode = Mode::FINISHED;
+                    standby_com_z = command_->command()[23]; // keep the plan's CoM height, no snap to 0
                     command_->hold_standby(standby_com_z);
                     spdlog::info("[FootCommand] plan complete after {} steps: stopping, "
                                  "holding the default pose.", command_->step_counter());
@@ -843,6 +851,7 @@ void State_Footstep::enter()
             }
 
             env->step();
+            policy_ready_ = true;
 
             std::this_thread::sleep_until(sleepTill);
             sleepTill += dt;
@@ -882,11 +891,15 @@ void State_Footstep::run()
 
     update_upper_target();
 
-    auto action = env->action_manager->processed_actions(); // 12 lower joint targets
-    for (int i = 0; i < (int)env->robot->data.joint_ids_map.size(); ++i)
+    // Legs keep the previous state's targets until the policy has acted once.
+    if (policy_ready_)
     {
-        int sdk = (int)env->robot->data.joint_ids_map[i];
-        lowcmd->msg_.motor_cmd()[sdk].q() = action[i];
+        auto action = env->action_manager->processed_actions(); // 12 lower joint targets
+        for (int i = 0; i < (int)env->robot->data.joint_ids_map.size(); ++i)
+        {
+            int sdk = (int)env->robot->data.joint_ids_map[i];
+            lowcmd->msg_.motor_cmd()[sdk].q() = action[i];
+        }
     }
     for (int j = 0; j < (int)upper_ids_.size(); ++j)
     {

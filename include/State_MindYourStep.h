@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <fstream>
 #include <memory>
 #include <thread>
@@ -42,7 +43,7 @@ public:
 
 private:
     void open_eval_file(const std::string& path);
-    void write_eval_row(float meas_x, float meas_y, float meas_yaw);
+    void write_eval_row(float meas_x, float meas_y, float meas_z, float meas_yaw);
 
     std::unique_ptr<isaaclab::ManagerBasedRLEnv> env;
     std::unique_ptr<isaaclab::MysGaitCommand> gait_;
@@ -60,7 +61,8 @@ private:
     bool eval_enabled_ = false;
 
     std::thread policy_thread;
-    bool policy_thread_running = false;
+    std::atomic<bool> policy_thread_running{false};
+    std::atomic<bool> policy_ready_{false};
 };
 
 REGISTER_FSM(State_MindYourStep)

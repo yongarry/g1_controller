@@ -78,6 +78,11 @@ public:
         {
             const std::string name_str(input_names[i]);
             auto& input_data = obs.at(name_str);
+            // ORT reads input_sizes[i] floats from this buffer; a shorter obs would be read past its end.
+            if ((int64_t)input_data.size() != input_sizes[i]) {
+                throw std::runtime_error("Observation '" + name_str + "' has " + std::to_string(input_data.size()) +
+                                         " values, model expects " + std::to_string(input_sizes[i]));
+            }
             auto input_tensor = Ort::Value::CreateTensor<float>(memory_info, input_data.data(), input_sizes[i], input_shapes[i].data(), input_shapes[i].size());
             input_tensors.push_back(std::move(input_tensor));
         }

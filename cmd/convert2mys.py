@@ -54,6 +54,9 @@ import os
 import sys
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _THIS_DIR)
+from convert_footcommand_2_global import wrap_to_pi
+
 _PROJ_DIR = os.path.dirname(_THIS_DIR)
 DEFAULT_INPUT = os.path.join(_PROJ_DIR, "config", "footcommands.csv")
 DEFAULT_OUTPUT = os.path.join(_PROJ_DIR, "config", "footcommands_mys.csv")
@@ -65,10 +68,6 @@ TRAIN_D_MIN, TRAIN_D_MAX = 0.2, 0.5      # xy_distance_range
 TRAIN_FEET_DISTANCE = 0.2                # lateral leg-crossing clip
 TRAIN_YAW_ABS = math.radians(15.0)       # yaw_range_deg (beta)
 TRAIN_GAIT_FREQUENCY = 1.0               # gait_frequency_range
-
-
-def wrap_to_pi(a):
-    return (a + math.pi) % (2.0 * math.pi) - math.pi
 
 
 def clip_yaw(rows, yaw_abs):
@@ -253,7 +252,7 @@ def main():
                    help="[m] min trained step length (validation only)")
     p.add_argument("--d-max", type=float, default=TRAIN_D_MAX,
                    help="[m] max trained step length (validation only)")
-    p.add_argument("--allow-x-flip", action="store_false",
+    p.add_argument("--allow-x-flip", action="store_true",
                    help="keep original step_x signs (consecutive forward/back flips). "
                         "Default is to align all non-zero step_x to the first step's sign.")
     args = p.parse_args()

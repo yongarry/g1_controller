@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include "FSM/State_RLBase.h"
 
 class State_Mimic : public FSMState
@@ -27,7 +28,8 @@ private:
     std::shared_ptr<MotionLoader_> motion_; // for saving
 
     std::thread policy_thread;
-    bool policy_thread_running = false;
+    std::atomic<bool> policy_thread_running{false};
+    std::atomic<bool> policy_ready_{false};
     std::array<float, 2> time_range_;
 };
 
