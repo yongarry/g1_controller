@@ -60,7 +60,6 @@ State_MindYourStep::State_MindYourStep(int state_mode, std::string state_string)
     YAML::Node deploy = YAML::LoadFile((policy_dir / "params" / "deploy.yaml").string());
     YAML::Node g = deploy["gait"] ? deploy["gait"] : YAML::Node();
 
-    // ---- gait command generator ----
     isaaclab::MysGaitCommand::Config gcfg;
     gcfg.policy_dt = deploy["step_dt"].as<double>();
     if (g)
@@ -76,7 +75,6 @@ State_MindYourStep::State_MindYourStep(int state_mode, std::string state_string)
     gait_ = std::make_unique<isaaclab::MysGaitCommand>(gcfg);
     State_MindYourStep::command = gait_.get();
 
-    // ---- CSV command source (optional) ----
     std::string src = (g && g["command_source"]) ? g["command_source"].as<std::string>()
                                                  : std::string("joystick");
     std::transform(src.begin(), src.end(), src.begin(),
@@ -94,7 +92,6 @@ State_MindYourStep::State_MindYourStep(int state_mode, std::string state_string)
         spdlog::warn("[MindYourStep] unknown gait.command_source '{}', using joystick", src);
     }
 
-    // ---- FK for per-step landing evaluation (csv mode) ----
     if (gait_->csv_mode())
     {
         std::filesystem::path urdf = (g && g["urdf_path"])
@@ -133,7 +130,6 @@ State_MindYourStep::State_MindYourStep(int state_mode, std::string state_string)
         }
     }
 
-    // ---- env (policy + managers); joint_ids_map is the 12 leg joints ----
     auto articulation = std::make_shared<unitree::BaseArticulation<LowState_t::SharedPtr>>(FSMState::lowstate);
     env = std::make_unique<isaaclab::ManagerBasedRLEnv>(deploy, articulation);
     const std::string policy_file = deploy["policy_file"]
@@ -143,7 +139,6 @@ State_MindYourStep::State_MindYourStep(int state_mode, std::string state_string)
     spdlog::info("[MindYourStep] loading policy '{}'", onnx_path.string());
     env->alg = std::make_unique<isaaclab::OrtRunner>(onnx_path.string());
 
-    // ---- upper body held at default ----
     YAML::Node ub = deploy["upper_body"];
     if (ub)
     {

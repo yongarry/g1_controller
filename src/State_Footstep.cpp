@@ -14,11 +14,7 @@
 
 isaaclab::FootstepCommand* State_Footstep::command = nullptr;
 
-// ---------------------------------------------------------------------------
-// Command-backed observation terms (read State_Footstep::command).
-// The 24-dim command is
-//   [ik_target(12), phase_cos, phase_sin, foot_command0(9), com_z_command(1)].
-// ---------------------------------------------------------------------------
+// 24-dim command: [ik_target(12), phase_cos, phase_sin, foot_command0(9), com_z_command(1)].
 namespace isaaclab
 {
 namespace mdp
@@ -50,7 +46,6 @@ REGISTER_OBSERVATION(foot_commands_3d)
     return std::vector<float>(c.begin() + 14, c.begin() + 23);
 }
 
-// foot_commands_w_comz = foot_command0(9) + com_z(1)  [indices 14:24]
 REGISTER_OBSERVATION(foot_commands_3d_w_comz)
 {
     const auto& c = State_Footstep::command->command();
@@ -60,9 +55,6 @@ REGISTER_OBSERVATION(foot_commands_3d_w_comz)
 } // namespace mdp
 } // namespace isaaclab
 
-// ---------------------------------------------------------------------------
-// Full G1 29-dof joint name -> Unitree SDK motor index map (for FK).
-// ---------------------------------------------------------------------------
 static std::map<std::string, int> g1_name_to_sdk()
 {
     return {
@@ -85,11 +77,8 @@ static float yaml_get(const YAML::Node& n, const std::string& key, float def)
     return n[key] ? n[key].as<float>() : def;
 }
 
-// World pose of the initial stance foot (the foot NOT swinging first), read
-// from the deploy.yaml global_init_lfoot / global_init_rfoot keys. It anchors
-// the world frame of the csv_global plan and MUST match the frame the plan was
-// authored in. Defaults to the G1 spawn-keyframe poses. (The goal command
-// source does not use this: it anchors on the robot's own stance at walk start.)
+// World pose of the initial stance foot (the one NOT swinging first). Anchors the
+// csv_global plan frame and MUST match the frame the plan was authored in.
 static isaaclab::WorldPose init_stance_pose(const YAML::Node& fs, int start_phase)
 {
     auto foot_pose = [&](const std::string& key, std::array<float, 4> def) {
@@ -117,7 +106,6 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     YAML::Node fs = deploy["footstep"];
     if (!fs) throw std::runtime_error("State_Footstep: deploy.yaml missing 'footstep' section.");
 
-    // ---- kinematics (Pinocchio) ----
     std::filesystem::path urdf_path = fs["urdf_path"].as<std::string>();
     if (!urdf_path.is_absolute()) urdf_path = param::proj_dir / urdf_path;
 
@@ -129,7 +117,6 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         fs["lee_name"].as<std::string>(), fs["ree_name"].as<std::string>(),
         g1_name_to_sdk());
 
-    // ---- command generator config ----
     isaaclab::FootstepCommand::Config fcfg;
     fcfg.future_foot_step_num = fs["future_foot_step_num"].as<int>(2);
     fcfg.step_dt = deploy["step_dt"].as<float>();
@@ -139,8 +126,7 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     fcfg.vrpy_offset = fs["vrpy_offset"].as<float>(0.02f);
     fcfg.vrp_horizon_length = fs["vrp_horizon_length"].as<float>(5.0f);
     fcfg.preview_horizon_length = fs["preview_horizon_length"].as<float>(2.0f);
-    // Ablation cases: must match the com_generate_type the policy was trained
-    // with (G13DFootEnvCfg / _heuri1 / _heuri2).
+    // Must match the com_generate_type the policy was trained with (G13DFootEnvCfg / _heuri1 / _heuri2).
     {
         const std::string cgt = fs["com_generate_type"].as<std::string>(std::string("prev"));
         if (cgt == "prev") fcfg.com_generate_type = isaaclab::ComGenerateType::PREV;
@@ -171,7 +157,6 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     }
     const int default_start_phase = fs["start_phase_indicator"].as<int>(0);
 
-    // default operator input + joystick scaling
     if (fs["default_input"])
     {
         auto di = fs["default_input"];
@@ -189,7 +174,6 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         joy_yaw_scale_ = yaml_get(js, "yaw_scale", joy_yaw_scale_);
     }
 
-    // ---- foot world-position source ----
     // fk_odometry: FK landing accumulation (default, hardware)
     // sim_odom:    MuJoCo rt/odommodestate base + FK foot offset
     // mujoco:      MuJoCo ankle-roll body xpos/yaw via odom.foot_position_body
@@ -216,10 +200,8 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         }
     }
 
-    // ---- foot-command source ----
-    // "csv_global": follow absolute world-frame foot targets (footcommands_global.csv);
-    // the planner recomputes the local command from the accumulated stance foot each step.
-    // Otherwise: per-tick local input from joystick (default) or csv.
+    // csv_global: absolute world-frame foot targets; the planner recomputes the local
+    // command from the accumulated stance foot each step.
     std::string src = fs["command_source"] ? fs["command_source"].as<std::string>() : "joystick";
     std::transform(src.begin(), src.end(), src.begin(), [](unsigned char c){ return std::tolower(c); });
 
@@ -238,9 +220,7 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
 
         fcfg.start_phase_indicator = plan.front().phase;
 
-        // Anchor of the global plan frame: world pose of the initial stance foot.
-        // Must match the frame the plan CSV was generated in
-        // (cmd/convert_footcommand_2_global.py).
+        // Must match the frame the plan CSV was generated in (cmd/convert_footcommand_2_global.py).
         const isaaclab::WorldPose init_stance = init_stance_pose(fs, plan.front().phase);
 
         command_ = std::make_unique<isaaclab::FootstepCommand>(fcfg, kin_);
@@ -252,10 +232,8 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     }
     else if (src == "goal")
     {
-        // Walk to a list of world-frame goal points (deploy.yaml footstep.goal).
-        // The planner re-measures the active goal from the stance foot at every
-        // step boundary, so the last step before a goal is the residual
-        // (goal - current position).
+        // The active goal is re-measured from the stance foot at every step boundary,
+        // so the last step before a goal is the residual (goal - current position).
         YAML::Node gn = fs["goal"];
         if (!gn) throw std::runtime_error("State_Footstep: command_source 'goal' needs a 'goal:' section in deploy.yaml.");
 
@@ -290,8 +268,7 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         if (goals.empty())
             throw std::runtime_error("State_Footstep: footstep.goal.points is empty.");
 
-        // Per-goal stop: upper-body pose to move to on arrival (validated
-        // against upper_ids_ once the upper-body config is loaded below).
+        // Validated against upper_ids_ once the upper-body config is loaded below.
         if (gn["stop"])
         {
             auto sn = gn["stop"];
@@ -321,10 +298,8 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     }
     else if (src == "vision")
     {
-        // ArUco footstep targets from cmd/aruco_footstep_perception.py.
-        // The perception node publishes pelvis-frame target poses; the planner
-        // keeps a world-frame memory and picks the two nearest feasible
-        // targets at every step boundary (steps in place while none are seen).
+        // ArUco targets from cmd/aruco_footstep_perception.py; the planner keeps a world-frame
+        // memory and steps in place while none are seen.
         YAML::Node vn = fs["vision"];
         isaaclab::FootstepCommand::VisionConfig vc;
         std::string topic = "rt/footstep_vision";
@@ -343,8 +318,7 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
                 vc.target_offset = isaaclab::math::Vec3(o[0], o[1], o[2]);
             }
         }
-        // Optional hand-eye extrinsic (D435i camera_link in the head_link
-        // frame); defaults to the official URDF mount otherwise.
+        // D435i camera_link in the head_link frame; defaults to the official URDF mount.
         if (vn && vn["camera"] && vn["camera"]["extrinsic"])
         {
             auto ex = vn["camera"]["extrinsic"];
@@ -391,7 +365,6 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     else
         command_->set_foot_state_source(isaaclab::FootStateSource::FK_ODOMETRY);
 
-    // ---- env (policy + managers) ----
     auto articulation = std::make_shared<unitree::BaseArticulation<LowState_t::SharedPtr>>(FSMState::lowstate);
     env = std::make_unique<isaaclab::ManagerBasedRLEnv>(deploy, articulation);
     const std::string policy_file = deploy["policy_file"]
@@ -401,7 +374,6 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
     spdlog::info("[Footstep] loading policy '{}'", onnx_path.string());
     env->alg = std::make_unique<isaaclab::OrtRunner>(onnx_path.string());
 
-    // ---- upper-body hold config ----
     YAML::Node ub = deploy["upper_body"];
     if (ub)
     {
@@ -419,15 +391,11 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
                                      " values, expected " + std::to_string(upper_ids_.size()) +
                                      " (one per upper_body joint).");
 
-    // ---- transitions ----
     this->registered_checks.emplace_back(
         std::make_pair(
             [&]()->bool{ return isaaclab::mdp::bad_orientation(env.get(), 1.0); },
             FSMStringMap.right.at("Passive")));
 
-    // ---- data logging (optional) ----
-    // Set `footstep: log_file: <path>` in deploy.yaml to enable. Relative paths
-    // are resolved against the project dir. Defaults to "footstep_log.txt".
     std::string log_path = fs["log_file"] ? fs["log_file"].as<std::string>()
                                           : std::string("footstep_log.txt");
     if (!log_path.empty())
@@ -437,9 +405,8 @@ State_Footstep::State_Footstep(int state_mode, std::string state_string)
         open_log_file(lp.string());
     }
 
-    // Per-step tracking evaluation. Set `footstep: eval_file: ""` to disable.
-    // The file itself is opened on enter() with a timestamp suffix so startup
-    // (which constructs every FSM state) does not truncate sibling logs.
+    // Opened on enter() with a timestamp suffix so startup (which constructs
+    // every FSM state) does not truncate sibling logs.
     std::string eval_path = fs["eval_file"] ? fs["eval_file"].as<std::string>()
                                             : std::string("log/footstep_eval.csv");
     if (!eval_path.empty())
@@ -459,9 +426,7 @@ void State_Footstep::open_log_file(const std::string& path)
         return;
     }
     log_file_ << std::fixed << std::setprecision(6);
-    // Column layout (tab separated). Existing columns preserved for plotting.ipynb;
-    // world-frame verification columns appended (stance_world_ odometry frame),
-    // matching tocabi commands.py data.txt logging.
+    // Existing columns are read by plotting.ipynb; new columns go at the end.
     log_file_ << "tick\twalking_tick"
                  "\tref_zmp_x\tref_zmp_y\tref_zmp_z"
                  "\ttarget_com_stance_x\ttarget_com_stance_y\ttarget_com_stance_z"
@@ -481,9 +446,7 @@ void State_Footstep::open_log_file(const std::string& path)
     spdlog::info("[FootLog] logging to '{}'.", path);
 }
 
-// One row per completed footstep: what was commanded, what the foot actually
-// landed on, and the difference - all in the stance-foot frame, the frame the
-// command itself is expressed in. This is the data cmd/eval_footstep.py reads.
+// Eval rows are in the stance-foot frame (the command frame); read by cmd/eval_footstep.py.
 static std::filesystem::path stamp_eval_path_(const std::filesystem::path& template_path)
 {
     // log/footstep_eval.csv -> log/footstep_eval_YYMMDD_HHMMSS.csv
@@ -526,9 +489,9 @@ void State_Footstep::write_eval_row()
 {
     if (!eval_enabled_) return;
     const auto& c = *command_;
-    const isaaclab::math::Vec3& cmd = c.last_step_command();   // [x, y, z]
-    const isaaclab::math::Vec3& meas = c.last_step_measured(); // [x, y, z]
-    const isaaclab::math::Vec3& err = c.last_step_error();     // [ex, ey, ez]
+    const isaaclab::math::Vec3& cmd = c.last_step_command();
+    const isaaclab::math::Vec3& meas = c.last_step_measured();
+    const isaaclab::math::Vec3& err = c.last_step_error();
     const isaaclab::math::Vec3& tim = c.last_step_timing();    // [ssp_t, dsp_t, height]
 
     eval_file_ << c.step_counter() << "," << (c.last_step_swing_right() ? "R" : "L") << ","
@@ -587,7 +550,6 @@ void State_Footstep::enter()
 
     if (!eval_path_.empty()) open_eval_file(eval_path_);
 
-    // gains for the 12 lower-body (action) joints
     for (int i = 0; i < (int)env->robot->data.joint_ids_map.size(); ++i)
     {
         int sdk = (int)env->robot->data.joint_ids_map[i];
@@ -596,7 +558,6 @@ void State_Footstep::enter()
         lowcmd->msg_.motor_cmd()[sdk].dq() = 0;
         lowcmd->msg_.motor_cmd()[sdk].tau() = 0;
     }
-    // gains for held upper-body joints
     for (int j = 0; j < (int)upper_ids_.size(); ++j)
     {
         int sdk = upper_ids_[j];
@@ -644,19 +605,8 @@ void State_Footstep::enter()
             }
         };
 
-        // vision mode: take the latest perception frame (camera optical
-        // frame), convert it to the pelvis frame with the waist FK, and hand
-        // it to FootstepCommand (which ingests it inside compute() with this
-        // tick's stance-foot state).
-        //
-        // The FK runs on the waist angles the frame was CAPTURED at, which the
-        // perception node ships with it. Using this tick's joints instead
-        // would place the targets through a camera pose the head has already
-        // moved away from - only the fallback path does that, when the
-        // perception node has no robot state of its own.
-        // Rate-limited dump of the vision pipeline (camera -> pelvis -> foot_cmd).
-        // Perception publishes ~camera rate; this only prints ~1 Hz so the
-        // console stays readable while still confirming DDS + FK + planner.
+        // Waist FK uses the angles the frame was CAPTURED at; this tick's joints (a camera
+        // pose the head has already left) are only a fallback. Logging is limited to ~1 Hz.
         auto last_vision_log = clock::now() - std::chrono::seconds(2);
         auto feed_vision = [&]() {
             if (!vision_sub_) return;
@@ -690,10 +640,8 @@ void State_Footstep::enter()
                                      cam.pos[0], cam.pos[1], cam.pos[2],
                                      pel.pos[0], pel.pos[1], pel.pos[2]);
                     }
-                    // Current planned foot command (stance frame). Before the
-                    // first step / while station-keeping this is the in-place
-                    // default; after priming / step boundaries it is the
-                    // ArUco-derived target (see [FootVision] planned targets).
+                    // Stance frame: the in-place default until the first step / while
+                    // station-keeping, else the ArUco-derived target.
                     if (command_->vision_mode())
                     {
                         const auto& fc = command_->foot_command0();
@@ -707,10 +655,8 @@ void State_Footstep::enter()
             }
         };
 
-        // initial reset. Except for the scripted sources (see auto_start below)
-        // the planner is NOT reset here: the state enters in standby and
-        // command_->reset() runs at the moment walking starts, so it anchors on
-        // the state the robot is in then.
+        // Except for auto_start sources the planner is NOT reset here: command_->reset()
+        // runs when walking starts, so it anchors on the state the robot is in then.
         env->robot->update();
         load_full_state(q, qd);
         kin_->set_state(q, qd);
@@ -718,10 +664,8 @@ void State_Footstep::enter()
         update_base_from_odom();
         if (command_source_) command_->set_input(command_source_->input());
         feed_vision();
-        // A scripted plan (csv, csv_global) needs no aiming, so it starts walking
-        // as soon as the state is entered and stops once the plan is done. Vision
-        // does the same: RB+Y already entered this state, so do not wait for
-        // another Y. Joystick / goal wait in standby for the Y press.
+        // Scripted plans need no aiming and vision was already entered with RB+Y, so both
+        // start walking at once. Joystick / goal wait in standby for Y.
         const int plan_steps = command_source_ ? command_source_->size() : 0;
         const bool auto_start = command_->global_mode() || plan_steps > 0
                              || command_->vision_mode();
@@ -729,15 +673,12 @@ void State_Footstep::enter()
         else            command_->hold_standby(0.0f);
         env->reset();
 
-        // STANDBY -> (Y) -> WALKING -> (goal reached) -> AT_GOAL -> WALKING ...
-        // and FINISHED once the last goal / the global plan is done. Everything
-        // but WALKING holds the standby command, i.e. the robot stands still.
+        // STANDBY -(Y)-> WALKING -(goal)-> AT_GOAL -> WALKING ..., FINISHED after the last
+        // goal / plan. Everything but WALKING holds the standby command.
         enum class Mode { STANDBY, WALKING, AT_GOAL, FINISHED };
         Mode mode = auto_start ? Mode::WALKING : Mode::STANDBY;
         auto resume_at = clock::now();
-        // CoM height to stand at: 0 before the first step, then the com_z of the
-        // goal just reached, so stopping does not undo the crouch the robot
-        // walked there with.
+        // Stopping keeps the com_z of the goal just reached, so it does not undo the crouch.
         float standby_com_z = 0.0f;
 
         while (policy_thread_running)
@@ -750,20 +691,15 @@ void State_Footstep::enter()
             if (command_source_) command_->set_input(command_source_->input());
             feed_vision();
 
-            // Standby / stopped: the policy runs on a frozen-phase, stand-still
-            // command so it holds the stance instead of stepping.
+            // The policy keeps running on a frozen-phase command so it holds the stance.
             if (mode == Mode::STANDBY)
             {
                 command_->hold_standby(standby_com_z);
                 if (walk_started_)
                 {
                     command_->reset();
-                    // Seed the observation history with the first WALKING frame.
-                    // Without this the policy starts a step with up to
-                    // history_length * skip_history_tick frames of standby
-                    // observations (frozen phase, zero foot command) still in
-                    // the buffer - a transient it never saw in training, where
-                    // every episode begins from a reset history.
+                    // Seed the obs history with the first WALKING frame: stale standby frames
+                    // are a transient never seen in training, where episodes start from a reset.
                     env->reset();
                     mode = Mode::WALKING;
                     spdlog::info("[Footstep] walk start");
@@ -791,7 +727,6 @@ void State_Footstep::enter()
             if (mode == Mode::WALKING)
             {
                 command_->compute();
-                // per-step landing error report (mirrors tocabi cc.cpp)
                 if (command_->step_completed())
                 {
                     write_eval_row();
@@ -807,11 +742,9 @@ void State_Footstep::enter()
                     spdlog::info(">> Z error : {:.4f} [m]", std::abs(e[2]));
                     spdlog::info("Foot Yaw error : {:.4f} [rad]",
                                  std::abs(command_->last_step_yaw_error()));
-                    // spdlog::info("t_total: {:.3f}", command_->last_step_total_time());
                 }
 
-                // Reached a goal: stop right here (the standby command replaces
-                // the step that was just planned) and move the upper body.
+                // The standby command replaces the step that was just planned.
                 if (command_->goal_arrived())
                 {
                     const int reached = command_->goal_index() - 1;
@@ -821,10 +754,8 @@ void State_Footstep::enter()
                         upper_motion_done_ = false; // run() takes it from here
                         upper_pose_index_ = reached;
                     }
-                    // Stand at the CoM height the robot actually walked here with
-                    // (the rate-limited value, which may still be short of that
-                    // goal's com_z), so the stop does not step the height either
-                    // way.
+                    // The rate-limited com_z (may be short of the goal's), so the stop
+                    // does not step the height either way.
                     standby_com_z = command_->com_z();
                     resume_at = clock::now() + std::chrono::duration_cast<clock::duration>(
                         std::chrono::duration<double>(stop_hold_time_));
@@ -836,8 +767,7 @@ void State_Footstep::enter()
                 else if (command_->global_plan_done() ||
                          (plan_steps > 0 && command_->step_counter() >= plan_steps))
                 {
-                    // Plan finished: stop on the foot that just landed and hold
-                    // the default pose rather than marching in place forever.
+                    // Stop rather than marching in place forever.
                     mode = Mode::FINISHED;
                     standby_com_z = command_->command()[23]; // keep the plan's CoM height, no snap to 0
                     command_->hold_standby(standby_com_z);
@@ -894,7 +824,7 @@ void State_Footstep::run()
     // Legs keep the previous state's targets until the policy has acted once.
     if (policy_ready_)
     {
-        auto action = env->action_manager->processed_actions(); // 12 lower joint targets
+        auto action = env->action_manager->processed_actions();
         for (int i = 0; i < (int)env->robot->data.joint_ids_map.size(); ++i)
         {
             int sdk = (int)env->robot->data.joint_ids_map[i];

@@ -1,29 +1,13 @@
 #!/usr/bin/env python3
 # Copyright (c) 2025, DYROS.
 #
-# Generate a local per-step foot command CSV (config/footcommands.csv) by
-# sampling step_x / step_y / step_z / step_yaw uniformly from the trained command
-# ranges. Feet alternate (R, L, R, ...) and the final step is a "stop" step
-# (step_x=0, step_z=0, step_yaw=0) so the robot squares up at the end.
-#
-# --realistic: after a large step_x / step_y (upper half of that axis range) or
-# a large |step_z| (outer half toward either extreme), the next sample on that
-# axis is drawn from the non-extreme band. Consecutive extremes would otherwise
-# stack landing error into the following global-plan command and push it past
-# the trained limits.
-#
-# The default ranges match `footstep.ranges` in the footstep policy deploy.yaml
-# (the controller clamps to these anyway). ssp_t / dsp_t / height are written as
-# fixed values by default (override with flags, or pass a range to randomize).
+# Generate config/footcommands.csv by sampling step_x/y/z/yaw uniformly from
+# the trained command ranges (feet alternate, last step is a stop step), then
+# run the global/MYS converters and the scene generator.
 #
 # Usage:
-#   python3 cmd/gen_cmd.py 10                     # 10 steps -> config/footcommands.csv
-#   python3 cmd/gen_cmd.py 20 --start L --seed 0
-#   python3 cmd/gen_cmd.py 12 --x -0.1 0.2 --yaw -0.1 0.1 --y 0.22 0.26 --z -0.1 0.15
-#   python3 cmd/gen_cmd.py 8 --no-stop -o /tmp/fc.csv
-#   python3 cmd/gen_cmd.py 10 --real              # real robot: skip MuJoCo terrain XML
-#   python3 cmd/gen_cmd.py 10 --realistic         # no two consecutive large xyz steps
-#   python3 cmd/gen_cmd.py 10 --com-z 0.02        # hold a +2 cm CoM offset on every step
+#   python3 cmd/gen_cmd.py 10
+#   python3 cmd/gen_cmd.py 20 --start L --seed 0 --realistic
 
 import argparse
 import csv
@@ -49,11 +33,8 @@ RANGE_Z = (-0.15, 0.2)   # per-step height change [m]
 RANGE_YAW = (-0.4, 0.4)   # per-step turn [rad]
 NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
-# --realistic: x/y are "large" in the upper (1 - REALISTIC_SMALL_FRAC) of the
-# range; z is "large" outside the inner REALISTIC_SMALL_FRAC band around 0
-# (signed). After a large sample the next draw on that axis stays in the
-# non-extreme band so consecutive extremes cannot stack landing error past
-# the trained limits.
+# --realistic: after a large sample the next draw on that axis stays in this
+# non-extreme band, so consecutive extremes cannot stack landing error.
 REALISTIC_SMALL_FRAC = 0.5
 
 # 03. 3d random visual footstep sampling 
@@ -64,8 +45,7 @@ REALISTIC_SMALL_FRAC = 0.5
 # NOMINAL_Y = 0.237         # lateral width used for the final stop step [m]
 
 # 05. real robot stair experiment
-# Fixed per-step z scene (uncomment to use). Length must equal `step` (incl. stop).
-# x/y/yaw still come from --x/--y/--yaw (or RANGE_*). Example 10-step climb:
+# Fixed per-step scene (uncomment to use). Length must equal `step` (incl. stop).
 # SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.0]
 # SCENE_X = [0.400, 0.25, 0.25, 0.25, 0.25, 0.25, 0.0]
 # SCENE_Z = [0.128, 0.12, 0.12, 0.12, 0.12, 0.00, 0.00, -0.15, -0.15, -0.15, -0.158,  0.0, 0.0]
@@ -97,7 +77,6 @@ def sample(lo, hi):
 
 
 def sample_capped(lo, hi, cap_frac=None):
-    """Uniform sample on [lo, hi], or [lo, lo + cap_frac*(hi-lo)] when capped."""
     if cap_frac is not None and hi > lo:
         hi = lo + cap_frac * (hi - lo)
     return sample(lo, hi)
@@ -110,8 +89,7 @@ def axis_is_large(val, lo, hi, small_frac=REALISTIC_SMALL_FRAC):
 
 
 def z_inner_range(lo, hi, small_frac=REALISTIC_SMALL_FRAC):
-    """Non-extreme z band. If the range straddles 0, shrink toward 0 on each
-    side; otherwise the lower small_frac (same as x/y)."""
+    """Non-extreme z band: shrink toward 0 if the range straddles it."""
     if hi <= lo:
         return (lo, hi)
     if lo < 0.0 < hi:
@@ -209,8 +187,7 @@ if __name__ == "__main__":
                       args.ssp, args.dsp, args.height, stop_last=not args.no_stop,
                       scene_z=SCENE_Z, scene_x=SCENE_X, scene_yaw=SCENE_YAW, realistic=args.realistic)
 
-    # com_z is optional for both the C++ loader and the global converter, so the
-    # column only appears when it actually carries a value.
+    # com_z is optional for the C++ loader and the converter; omit it when 0.
     header = list(HEADER)
     if args.com_z != 0.0:
         header.append("com_z")
@@ -227,11 +204,9 @@ if __name__ == "__main__":
           f"(seed={args.seed}, start={args.start}, x={tuple(args.x)}, y={tuple(args.y)}, "
           f"z={tuple(args.z)}, yaw={tuple(args.yaw)}, realistic={args.realistic})")
     
-    # execute convert_footcommand_2_global.py to generate footcommands_global.csv
     import subprocess
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert_footcommand_2_global.py"), "--input", args.output, "--output", os.path.join(_PROJ_DIR, "config", "footcommands_global.csv")], check=True)
 
-    # execute gen_footstep_scene.py to generate footstep cubes in the MuJoCo scene XML
     subprocess.run(["python3", os.path.join(_THIS_DIR, "convert2mys.py"), "--input", args.output], check=True)
 
 

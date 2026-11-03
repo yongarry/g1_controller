@@ -1,36 +1,15 @@
 #!/usr/bin/env python3
 # Copyright (c) 2025, DYROS.
 #
-# Shared ArUco definitions for the vision-based footstep pipeline:
-#   * cmd/gen_aruco_footstep_scene.py  - writes marker textures + scene geoms
-#   * cmd/aruco_footstep_perception.py - detects markers and estimates targets
+# ArUco definitions shared by gen_aruco_footstep_scene.py (textures) and
+# aruco_footstep_perception.py (detector); also recorded in config/aruco_board.json.
 #
-# Everything that must agree between the texture generator and the detector
-# (dictionary, marker layout on a footstep target, corner conventions) lives
-# here and in the generated board file (config/aruco_board.json).
-#
-# Conventions
-# -----------
-# Target frame (one per footstep target):
-#   origin  = footstep center, ON the top surface
-#   x       = footstep yaw direction (walking direction)
-#   y       = left
-#   z       = up
-# Four square markers per target, ids = 4*target_index + j:
-#   j=0: front-left  (+c, +c)      j=1: front-right (+c, -c)
-#   j=2: back-right  (-c, -c)      j=3: back-left   (-c, +c)
-# where c = marker_spread and marker black-border side length = marker_size.
-# Every marker is axis-aligned with the target frame.  On the printable sheet
-# (+x = arrow up, +y = left) and on a correctly mounted real target:
-#   image-up   = +x_target  (OpenCV row 0 toward walking direction)
-#   image-left = +y_target
-# MuJoCo sim textures are pre-rotated 90° CW in gen_aruco_footstep_scene.py so
-# the offscreen render matches the same layout (see write_marker_textures).
-#
-# OpenCV canonical marker corners (detectMarkers order) are
-#   [top-left, top-right, bottom-right, bottom-left]
-# of the marker image, independent of the viewing rotation (the detector
-# decodes the marker's own orientation from its bits).
+# Target frame: origin = footstep center on the top surface, x = walking
+# direction, y = left, z = up. Marker ids = 4*target_index + j, centers
+# j=0 (+c,+c), 1 (+c,-c), 2 (-c,-c), 3 (-c,+c), c = marker_spread.
+# Printed/real targets: image-up = +x_target, image-left = +y_target; sim
+# textures are pre-rotated 90° CW to match (see write_marker_textures).
+# OpenCV corners are [TL, TR, BR, BL] of the marker image, whatever the view rotation.
 
 import json
 import os
@@ -42,13 +21,8 @@ try:
 except ImportError:  # board-geometry-only users (no texture gen / detection)
     cv2 = None
 
-# ---------------------------------------------------------------------------
-# Defaults (all overridable via gen_aruco_footstep_scene.py CLI, recorded in
-# the board JSON, and read back by the perception node)
-# ---------------------------------------------------------------------------
-DEFAULT_DICT_BITS = 4      # 4x4-bit markers (standard DICT_4X4_*: large, well-
-                           # separated id space; a 3-bit custom dict with many
-                           # ids mis-decodes badly - see make_dictionary)
+# Defaults; overridable via gen_aruco_footstep_scene.py and recorded in the board JSON.
+DEFAULT_DICT_BITS = 4      # 3-bit custom dicts mis-decode badly with many ids
 DEFAULT_DICT_SIZE = 250    # number of ids in the dictionary
 DEFAULT_DICT_SEED = 7      # extendDictionary is deterministic given the seed
 DEFAULT_MARKER_SIZE = 0.03     # [m] black border side length ("3x3 cm")
@@ -56,10 +30,8 @@ DEFAULT_MARKER_SPREAD = 0.04   # [m] |x|=|y| distance of marker centers
 DEFAULT_QUIET_MODULES = 1      # white quiet-zone width in marker modules
 MARKERS_PER_TARGET = 4
 
-# If True, marker texture PNGs are flipped vertically before being written.
-# MuJoCo +Z face maps PNG row 0 toward +y; a further 90° CW rotation is
-# applied in write_marker_textures() so sim matches the printable sheet layout
-# (image-up = +x_target).  Validated by cmd/test_aruco_sim_render.py.
+# MuJoCo +Z face maps PNG row 0 toward +y; write_marker_textures() rotates
+# 90° CW on top of this. Validated by cmd/test_aruco_sim_render.py.
 MARKER_TEXTURE_FLIP_V = False
 
 
@@ -67,11 +39,8 @@ def make_dictionary(bits=DEFAULT_DICT_BITS, size=DEFAULT_DICT_SIZE,
                     seed=DEFAULT_DICT_SEED):
     """Deterministic ArUco dictionary shared by generator & detector.
 
-    bits == 4 uses the standard predefined DICT_4X4_{50,100,250,1000}
-    (smallest one that fits `size` ids): these are designed for maximum
-    inter-marker distance, unlike extendDictionary output. Other bit sizes
-    fall back to a deterministic custom dictionary (weak for many ids -
-    a 3-bit dictionary is only usable with a handful of ids).
+    bits == 4 uses the smallest predefined DICT_4X4_* that fits (better
+    inter-marker distance than extendDictionary, which is weak for many ids).
     """
     if cv2 is None:
         raise ImportError("OpenCV (cv2) with aruco is required")
@@ -87,18 +56,13 @@ def make_dictionary(bits=DEFAULT_DICT_BITS, size=DEFAULT_DICT_SIZE,
 
 
 def detector_parameters(min_marker_perimeter_rate=0.04, fast=False):
-    """Shared detector tuning (subpixel corners; reject tiny blobs that a
-    small-dictionary decoder could hallucinate into valid ids).
-
-    fast=True: fewer adaptive-threshold scales and cheaper contour corner
-    refine - used for the half-res detect pass in the perception node.
-    Full-res passes keep SUBPIX for PnP accuracy.
+    """Shared detector tuning; min perimeter rejects tiny blobs a small
+    dictionary could hallucinate into valid ids. fast=True is for half-res passes.
     """
     params = cv2.aruco.DetectorParameters()
     params.minMarkerPerimeterRate = float(min_marker_perimeter_rate)
     if fast:
-        # Default tries win sizes 3..23 step 10 (3 passes). One mid-size
-        # threshold is enough once the image is already downscaled.
+        # One mid-size threshold is enough once the image is downscaled.
         params.adaptiveThreshWinSizeMin = 5
         params.adaptiveThreshWinSizeMax = 15
         params.adaptiveThreshWinSizeStep = 10
@@ -107,8 +71,7 @@ def detector_parameters(min_marker_perimeter_rate=0.04, fast=False):
             float(min_marker_perimeter_rate), 0.05)
     else:
         params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-        # Slightly fewer iterations than OpenCV defaults; quality loss is
-        # negligible for 3 cm markers and saves time on every hit.
+        # Fewer iterations than default: negligible loss for 3 cm markers.
         params.cornerRefinementWinSize = 5
         params.cornerRefinementMaxIterations = 20
         params.cornerRefinementMinAccuracy = 0.05
@@ -122,33 +85,27 @@ def marker_centers(spread=DEFAULT_MARKER_SPREAD):
 
 
 def marker_object_points(center_xy, marker_size=DEFAULT_MARKER_SIZE):
-    """3D corner positions (target frame, z=0 top surface) of one marker.
-
-    Order matches cv2.aruco detectMarkers corners:
-      [top-left, top-right, bottom-right, bottom-left]
-    with image-up = +x_target, image-left = +y_target (print-sheet layout).
-    """
+    """3D corners (target frame, z=0) in detectMarkers order [TL, TR, BR, BL]."""
     cx, cy = center_xy
     h = 0.5 * float(marker_size)
     return np.array([
-        [cx + h, cy + h, 0.0],   # top-left    (+x, +y)
-        [cx + h, cy - h, 0.0],   # top-right   (+x, -y)
-        [cx - h, cy - h, 0.0],   # bottom-right (-x, -y)
-        [cx - h, cy + h, 0.0],   # bottom-left  (-x, +y)
+        [cx + h, cy + h, 0.0],
+        [cx + h, cy - h, 0.0],
+        [cx - h, cy - h, 0.0],
+        [cx - h, cy + h, 0.0],
     ], dtype=np.float64)
 
 
 def marker_image(dictionary, marker_id, modules_px=32,
                  quiet_modules=DEFAULT_QUIET_MODULES, bits=DEFAULT_DICT_BITS,
                  flip_v=MARKER_TEXTURE_FLIP_V):
-    """Marker image incl. white quiet zone, ready to be used as a texture.
+    """Marker image incl. white quiet zone, as a texture.
 
-    Returns (img, scale) where scale = image_side / marker_side, i.e. the
-    factor by which the textured geom must be larger than marker_size so the
+    Returns (img, scale); the textured geom must be scale * marker_size so the
     black border keeps its physical size.
     """
-    n_marker = bits + 2                     # bit grid + black border modules
-    n_total = n_marker + 2 * quiet_modules  # + white quiet zone
+    n_marker = bits + 2
+    n_total = n_marker + 2 * quiet_modules
     img = cv2.aruco.generateImageMarker(dictionary, int(marker_id),
                                         n_marker * modules_px)
     pad = quiet_modules * modules_px
@@ -159,9 +116,6 @@ def marker_image(dictionary, marker_id, modules_px=32,
     return img, n_total / float(n_marker)
 
 
-# ---------------------------------------------------------------------------
-# Board file (config/aruco_board.json)
-# ---------------------------------------------------------------------------
 def save_board(path, targets, dict_bits, dict_size, dict_seed,
                marker_size, marker_spread, quiet_modules):
     """targets: list of dicts with keys index, foot, world{x,y,z,yaw}."""

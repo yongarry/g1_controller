@@ -2,44 +2,13 @@
 # Copyright (c) 2025, DYROS.
 #
 # Convert a Footstep local command CSV (config/footcommands.csv) into a
-# MindYourStep replay CSV (config/footcommands_mys.csv) so both controllers
-# execute the same stance-frame footholds for experiment comparison.
+# MindYourStep replay CSV (config/footcommands_mys.csv) so both controllers run
+# the same stance-frame footholds. step_yaw is relative to the current stance
+# foot, not a running sum; step_y is a positive magnitude.
 #
-# Footstep and MindYourStep share the same local-command semantics:
-#   foot,step_x,step_y,step_z,step_yaw[,ssp_t,dsp_t,height]
-#     foot   : L / R  -> which foot swings
-#     step_* : displacement of the swing foot in the stance-foot yaw frame
-#              (step_y is a positive magnitude; the controller applies +/-)
-#     step_yaw : swing-foot yaw RELATIVE to the current stance foot
-#
-# ---------------------------------------------------------------------------
-# Heading
-# ---------------------------------------------------------------------------
-# CSV mode in both controllers uses each row as a stance-frame command:
-#   step_yaw is THAT step's heading relative to the current stance foot.
-# It is not a running sum. The policy / Footstep planner sees only this
-# relative value. Summing the column ("accumulated heading" below) is only a
-# diagnostic of the path if every increment were tracked perfectly.
-#
-#   keep   (default) copy step_x / step_y / step_yaw through. Same command
-#          Footstep csv mode would run, except step_yaw is clipped to the
-#          trained yaw_range_deg +/-15 deg, and step_x keeps the first
-#          non-zero sign so consecutive forward/back flips are removed.
-#   anchor rewrite step_yaw so the feet hold a global heading. Training
-#          samples yaw back to theta_feet, so this is the strafing equivalent.
-#          Clipped to yaw_range afterwards.
-
-#
-# ---------------------------------------------------------------------------
-# Timing
-# ---------------------------------------------------------------------------
-# MindYourStep advances one foothold every HALF gait cycle, i.e. every
-# 0.5 / gait_frequency seconds. The policy is trained with gait_frequency = 1.0
-# (MindYourStepFootCommandCfg.gait_frequency_range), so one foothold takes
-# 0.5 s and gait.gait_frequency in deploy.yaml MUST stay at 1.0 -- changing it
-# desynchronizes the policy from the gait clock it learned. ssp_t/dsp_t/height
-# are copied for eval logging only and do NOT drive the MYS gait clock, so a
-# plan authored for 1.0 s footholds is replayed at 0.5 s per foothold.
+# MYS advances one foothold every half gait cycle; gait.gait_frequency in
+# deploy.yaml MUST stay 1.0 to match training. ssp_t/dsp_t/height are copied
+# for eval logging only and do not drive the MYS gait clock.
 #
 # Usage:
 #   python3 cmd/convert2mys.py
@@ -82,12 +51,8 @@ def clip_yaw(rows, yaw_abs):
 
 
 def same_x_sign(rows):
-    """Keep every non-zero step_x on the first non-zero step's sign.
-
-    Footstep samples RANGE_X across zero, so consecutive rows often flip
-    forward/back. Training holds movement_direction fixed inside a gait.
-    Magnitude is unchanged; only the sign is aligned. Zero (stop) rows stay 0.
-    """
+    """Align non-zero step_x to the first non-zero step's sign; training
+    holds movement_direction fixed inside a gait."""
     sign = 0.0
     for r in rows:
         if abs(r["step_x"]) > 1e-9:
@@ -165,19 +130,16 @@ def heading_profile(rows):
 
 
 def anchor_heading(rows, theta_feet=0.0):
-    """Rewrite step_yaw so every swing foot lands on the global heading theta_feet.
-
-    Mirrors the training goal sampler: the yaw target is measured back to a global
-    heading rather than accumulated, so the relative command stops drifting.
-    """
-    stance_yaw = 0.0  # the foot the robot starts on defines the frame
+    """Rewrite step_yaw so every swing foot lands on the global heading theta_feet
+    (mirrors the training goal sampler)."""
+    stance_yaw = 0.0
     changed = 0
     for r in rows:
         new_yaw = wrap_to_pi(theta_feet - stance_yaw)
         if abs(new_yaw - r["step_yaw"]) > 1e-9:
             changed += 1
         r["step_yaw"] = new_yaw
-        stance_yaw = wrap_to_pi(stance_yaw + new_yaw)  # the swing foot becomes stance
+        stance_yaw = wrap_to_pi(stance_yaw + new_yaw)
     return changed
 
 

@@ -1,18 +1,10 @@
 // Copyright (c) 2025, DYROS.
 // All rights reserved.
 //
-// Single-robot teleop / CSV generator for the 16-dim foot goal consumed by the
-// Isaac Lab G1 MindYourStep policy (same layout as MindYourStepFootCommand /
-// GoalDoubleFootPlacement):
-//
-//   [ l_pos_offset(3), l_orn_offset(4), r_pos_offset(3), r_orn_offset(4),
-//     gait_info(2) ]
-//
-// Joystick mode follows the original mind-your-step deploy GaitGenerator.
-// CSV mode replays per-step local footholds from footcommands_mys.csv
-// with the same semantics as Footstep csv mode: step_* is in the current
-// stance-foot yaw frame. step_yaw is that row's relative heading, not a
-// running sum -- see cmd/convert2mys.py.
+// Teleop / CSV generator for the 16-dim MindYourStep foot goal (layout must match
+// MindYourStepFootCommand / GoalDoubleFootPlacement):
+//   [ l_pos_offset(3), l_orn_offset(4), r_pos_offset(3), r_orn_offset(4), gait_info(2) ]
+// CSV step_* is in the current stance-foot yaw frame; step_yaw is relative, not a running sum.
 
 #pragma once
 
@@ -65,8 +57,6 @@ public:
 
     explicit MysGaitCommand(const Config& cfg) : cfg_(cfg) { reset(); }
 
-    // Load a local foot-command CSV (same columns as footcommands.csv) and
-    // switch this generator into CSV replay mode.
     void load_csv(const std::string& path)
     {
         load_csv_(path);
@@ -78,7 +68,6 @@ public:
 
     bool csv_mode() const { return csv_mode_; }
 
-    // True on the tick a scripted foothold just completed (landing evaluated).
     bool step_completed() const { return step_completed_; }
     int step_counter() const { return step_counter_; }
     bool last_step_swing_right() const { return last_swing_ == 1; }
@@ -109,13 +98,12 @@ public:
         cmd_[14] = 0.0f;
         cmd_[15] = 0.0f;
 
-        // Park one tick before the half-cycle boundary that matches the CSV's
-        // first swing foot, so the first compute() samples at gp = 0.0 (left)
-        // or 0.5 (right) rather than 0.02 / 0.52.
+        // Park one tick before the half-cycle boundary of the CSV's first swing foot,
+        // so the first compute() samples at gp = 0.0 (left) or 0.5 (right).
         if (csv_mode_ && !steps_.empty())
         {
             const double off = gp_off_();
-            if (steps_.front().swing == 1) // right swings first
+            if (steps_.front().swing == 1)
             {
                 gait_process_ = 0.5 - off;
                 swing_foot_idx_ = 0;
@@ -142,9 +130,8 @@ public:
         else                                        next_dir_ = (lat >= 0.0f) ? Move::LEFT : Move::RIGHT;
     }
 
-    // Call once per policy tick. When a foothold completes, step_completed() is
-    // true for that tick and last_cmd_* hold the command that just finished
-    // so the caller can measure the landing and write the eval row.
+    // Call once per policy tick. On a completed foothold, step_completed() is true
+    // for that tick and last_cmd_* hold its command.
     void compute()
     {
         step_completed_ = false;
@@ -163,8 +150,6 @@ public:
 
         // Switch direction only on a half-cycle boundary so gait_info and the
         // 14-D foot target jump together (training resamples at the same tick).
-        // Applying move_dir_ immediately used to spin gp_info mid-step while the
-        // offsets stayed on the previous command, which the policy never saw.
         if (sample_goal && next_dir_ != move_dir_)
         {
             if (next_dir_ != Move::STILL) gaits_to_still_ = cfg_.stop_steps;
@@ -255,7 +240,6 @@ private:
     {
         if (sample_goal)
         {
-            // A previous scripted foothold just landed.
             if (has_active_)
             {
                 last_swing_ = active_swing_;
@@ -298,10 +282,8 @@ private:
             }
             else
             {
-                // Last foothold done: settle like joystick (swing-only still + gait
-                // clock) for stop_steps half-cycles, then fully-still both feet.
-                // Jumping straight to both-feet still with gp=[0,0] is an input
-                // the policy never sees at a walking→stand transition.
+                // Settle like joystick for stop_steps half-cycles before fully still: jumping
+                // straight to gp=[0,0] is an input the policy never sees at a walk->stand transition.
                 if (!plan_done_)
                 {
                     plan_done_ = true;
@@ -333,14 +315,9 @@ private:
         }
     }
 
-    // Hold-still goal.
-    // Settling (gaits_to_still > 0): swing foot at nominal stance width, stance at 0
-    //   -- same structure as a walking command, matches GaitGenerator._gen_still_cmd
-    //   while the gait clock is still running.
-    // Fully still: BOTH feet at +-feet_distance and gp_info = [0,0], matching
-    //   GoalDoubleFootPlacement's steady_still_flag (still_phase and num_gaits >= 2).
-    // The previous swing-only command in the fully-still case swapped which foot
-    // was non-zero every 0.5 s and produced a twitch at each hidden step boundary.
+    // Settling: swing foot at nominal width, stance at 0 (matches GaitGenerator._gen_still_cmd).
+    // Fully still: BOTH feet at +-feet_distance (matches GoalDoubleFootPlacement steady_still_flag);
+    // a swing-only command here twitches at every hidden step boundary.
     Offsets still_offsets_() const
     {
         Offsets o{kZero, kZero, kIdentity, kIdentity};
@@ -509,7 +486,6 @@ private:
     Move move_dir_ = Move::STILL;
     Move next_dir_ = Move::STILL;
 
-    // CSV replay
     bool csv_mode_ = false;
     std::vector<StepCmd> steps_;
     int cursor_ = 0;

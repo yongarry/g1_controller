@@ -2,27 +2,10 @@
 # Copyright (c) 2025, DYROS.
 #
 # Convert per-step LOCAL foot commands (config/footcommands.csv) into absolute
-# WORLD-frame swing-foot targets (config/footcommands_global.csv) consumed by
-# State_Footstep when `command_source: csv_global`.
-#
-# World frame convention (must match the controller):
-#   * stance[0] is the INITIAL STANCE FOOT world pose (--init-lfoot/--init-rfoot),
-#     which must equal deploy.yaml global_init_lfoot/rfoot so the controller's
-#     accumulated stance frame and these targets share the same world frame.
-#   * Each output row is the SWING foot's absolute landing pose for that step.
-#   * On-device, the planner accumulates the achieved stance pose from measured
-#     foot landings and recomputes the local command from the current stance foot
-#     to the indexed target, so this file only needs the nominal world targets.
-#
-# Local CSV format  (one row per step):
-#   foot,step_x,step_y,step_yaw,ssp_t,dsp_t,height[,step_z][,com_z]
-#     foot   : L / R  -> which foot swings (sets swing side / y sign)
-#     step_* : per-step LOCAL displacement, expressed in the stance-foot frame
-#              (step_y is a positive magnitude; the sign is applied from `foot`)
-#
-# Global CSV format (one row per step):
-#   foot,pos_x,pos_y,pos_z,yaw,ssp_t,dsp_t,height[,com_z]
-#     pos_*  : absolute SWING-foot landing pose in the world frame
+# WORLD-frame swing-foot landing poses (config/footcommands_global.csv) for
+# State_Footstep with `command_source: csv_global`.
+# --init-lfoot/--init-rfoot must equal deploy.yaml global_init_lfoot/rfoot so
+# both share the controller's world frame. step_y is a positive magnitude.
 #
 # Usage:
 #   python3 cmd/convert_footcommand_2_global.py
@@ -45,7 +28,6 @@ def wrap_to_pi(a):
 
 
 def read_local_csv(path):
-    """Read the per-row local foot command CSV into a list of dicts."""
     with open(path, newline="") as f:
         reader = csv.reader(f)
         header = [h.strip().lower() for h in next(reader)]
@@ -66,9 +48,9 @@ def read_local_csv(path):
                 continue
             foot = cells[idx["foot"]].strip().lower()
             if foot in ("r", "right"):
-                phase = 0  # right swing -> foot lands on -y
+                phase = 0  # right swing -> lands on -y
             elif foot in ("l", "left"):
-                phase = 1  # left swing  -> foot lands on +y
+                phase = 1
             else:
                 raise ValueError(f"invalid foot label '{cells[idx['foot']]}' in {path}")
             rows.append({
@@ -89,16 +71,8 @@ def read_local_csv(path):
 
 
 def to_global(rows, init_stance):
-    """Accumulate local steps into absolute world swing-foot targets.
-
-    stance = pose of the foot the swing foot pushes off from. stance[0] is the
-    initial stance foot world pose (`init_stance`); this MUST match the anchor the
-    controller uses (deploy.yaml global_init_lfoot/rfoot). For each step:
-        step_y_signed = +|step_y| for a left swing, -|step_y| for a right swing
-        swing = stance + R(stance.yaw) * (step_x, step_y_signed, step_z)
-        swing.yaw = wrap(stance.yaw + step_yaw)
-        next stance = swing
-    """
+    """Accumulate local steps into absolute world swing-foot targets;
+    each swing foot becomes the next stance."""
     stance = dict(init_stance)
     out = []
     for r in rows:
@@ -159,7 +133,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     rows = read_local_csv(args.input)
-    # initial stance foot = the foot NOT swinging first (phase 0 = right swings).
+    # Initial stance = the foot NOT swinging first.
     init_foot = args.init_lfoot if rows[0]["phase"] == 0 else args.init_rfoot
     init_stance = {"x": init_foot[0], "y": init_foot[1], "z": init_foot[2], "yaw": init_foot[3]}
     targets = to_global(rows, init_stance)

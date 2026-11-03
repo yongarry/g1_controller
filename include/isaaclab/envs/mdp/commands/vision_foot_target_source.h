@@ -1,35 +1,14 @@
 // Copyright (c) 2025, DYROS.
 // All rights reserved.
 //
-// DDS subscriber + camera-to-pelvis transform for the ArUco footstep-target
-// perception node (cmd/aruco_footstep_perception.py).
-//
-// The node publishes RAW camera-frame estimates as a JSON payload on a
-// std_msgs String topic (default rt/footstep_vision):
-//
-//   {"stamp": <unix time>, "frame": "camera_optical",
-//    "waist": [yaw, roll, pitch],
-//    "targets": [
-//      {"id": 0, "pos": [x, y, z], "quat": [w, x, y, z], "nmk": 4, "err": 0.3},
-//      ... ]}
-//
-// Poses are the footstep-target frames (origin = footstep center on the top
-// surface, x = footstep yaw direction, z = up) expressed in the D435i COLOR
-// OPTICAL frame (OpenCV convention: x right, y down, z forward - the direct
-// solvePnP output). The controller converts them to the pelvis frame with
-// D435PelvisCamTransform (analytic waist FK below), then FootstepCommand
-// (vision mode) takes them to the stance-foot frame / accumulated world frame
-// and plans on them.
-//
-// "waist" carries the three waist joint positions sampled when the image was
-// captured, and is what the camera->pelvis FK must run on: the frame reaches
-// the controller tens of ms later, and with the head moving, the joints of the
-// consuming tick describe a different camera pose than the one the markers
-// were seen from - the mismatch lands directly on the target position. The
-// field is optional; without it the caller falls back to the current tick.
-//
-// JSON is parsed with yaml-cpp (JSON is a YAML subset), so no extra
-// dependency is needed.
+// DDS subscriber + camera-to-pelvis transform for cmd/aruco_footstep_perception.py.
+// JSON payload on a std_msgs String (parsed with yaml-cpp, JSON is a YAML subset):
+//   {"stamp": <unix time>, "frame": "camera_optical", "waist": [yaw, roll, pitch],
+//    "targets": [{"id": 0, "pos": [x, y, z], "quat": [w, x, y, z], "nmk": 4, "err": 0.3}, ...]}
+// Target frame: origin = footstep center on the top surface, x = footstep yaw, z = up,
+// expressed in the D435i COLOR OPTICAL frame (OpenCV: x right, y down, z forward).
+// "waist" is sampled at capture time; the FK must use it because the head keeps
+// moving during the tens of ms before the frame arrives.
 
 #pragma once
 
@@ -49,10 +28,7 @@
 namespace isaaclab
 {
 
-// One footstep target measured by the perception node. The subscriber fills
-// it in the CAMERA OPTICAL frame (raw PnP); D435PelvisCamTransform::to_pelvis
-// rewrites pos/quat in place into the PELVIS frame before it is handed to
-// FootstepCommand.
+// Filled in the CAMERA OPTICAL frame; to_pelvis rewrites pos/quat in place into the PELVIS frame.
 struct VisionTarget
 {
     int id = -1;              // footstep/board target index
@@ -62,28 +38,17 @@ struct VisionTarget
     float reproj_err = 0.0f;  // mean reprojection error [px]
 };
 
-// One perception frame: the targets it saw plus the waist configuration the
-// camera was in when it saw them.
 struct VisionFrame
 {
     std::vector<VisionTarget> targets;
     double stamp = 0.0;       // capture time [unix s], 0 if absent
-    bool has_waist = false;   // capture-time waist angles available
+    bool has_waist = false;
     // [yaw, roll, pitch] of the waist chain at capture time [rad]
     math::Vec3 waist = math::Vec3::Zero();
 };
 
-// ---------------------------------------------------------------------------
-// Camera-in-pelvis FK (analytic; mirrors the constants in g1_29dof.xml / the
-// official URDF). Only the 3 waist joints (SDK 12: yaw, 13: roll, 14: pitch)
-// sit between the pelvis and the HEAD-mounted D435i:
-//   pelvis -Rz(q12)-> (-0.0039635, 0, 0.035) -Rx(q13)->
-//   (0, 0, 0.019) -Ry(q14)-> head_link (0.0039635, 0, -0.054) ->
-//   d435 (0.05366, 0.01753, 0.47387) pitched down 0.8307767 rad.
-// An optional hand-eye correction (deploy.yaml vision.camera.extrinsic: the
-// D435i camera_link pose in the HEAD_LINK frame, RealSense convention x
-// forward / z up) overrides the default mount.
-// ---------------------------------------------------------------------------
+// Analytic camera-in-pelvis FK: only the 3 waist joints (SDK 12 yaw, 13 roll, 14 pitch)
+// sit between the pelvis and the HEAD-mounted D435i. Constants must match g1_29dof.xml / the URDF.
 class D435PelvisCamTransform
 {
 public:
@@ -120,13 +85,12 @@ public:
         Rw = Rw * Eigen::AngleAxisf(q_roll, math::Vec3::UnitX()).toRotationMatrix();
         p += Rw * P_TORSO_;
         Rw = Rw * Eigen::AngleAxisf(q_pitch, math::Vec3::UnitY()).toRotationMatrix();
-        p += Rw * P_HEAD_; // head_link frame reached
+        p += Rw * P_HEAD_;
         pos = p + Rw * ext_pos_;
         R = Rw * ext_R_cv_;
     }
 
-    // Rewrite camera-optical-frame targets into the pelvis frame, using the
-    // waist joint positions of the current control tick.
+    // Rewrite camera-optical-frame targets into the pelvis frame.
     void to_pelvis(std::vector<VisionTarget>& ts,
                    float q_yaw, float q_roll, float q_pitch) const
     {
@@ -158,9 +122,7 @@ public:
     explicit VisionFootTargetSubscriber(const std::string& topic = "rt/footstep_vision")
     : SubscriptionBase<std_msgs::msg::dds_::String_>(topic) {}
 
-    // Parse the latest payload into `out`. Returns true only when a message
-    // newer than the previously taken one was parsed successfully (out may
-    // hold no targets: a valid frame with nothing in view).
+    // True only when a newer message parsed OK (out may hold no targets: nothing in view).
     bool take(VisionFrame& out)
     {
         std::string payload;

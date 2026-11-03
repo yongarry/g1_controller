@@ -1,30 +1,14 @@
 #!/usr/bin/env python3
 # Copyright (c) 2025, DYROS.
 #
-# Read the goal points the footstep controller walks to
-# (deploy.yaml -> footstep.goal.points, command_source: goal) and write them as
-# marker geoms into a MuJoCo scene XML, so the goals are visible in simulation.
-#
-# Each goal becomes a flat disc of radius `reach_radius` (the tolerance the
-# planner uses to declare the goal reached) plus a sphere on a short pole at the
-# point itself. The markers are visual only: contype/conaffinity are 0 so the
-# robot walks straight through them.
-#
-# Frame note:
-#   Goal points are in the world frame anchored at the robot spawn pose
-#   (x, y, yaw = 0, 0, 0), which is where the G1 model spawns in the scene, so
-#   they line up with the MuJoCo world frame directly.
-#
-# The geoms are written into a marked region of the XML and the script is
-# idempotent: re-running replaces the previously generated region rather than
-# appending. On the first run the output scene is seeded from --base.
+# Draw deploy.yaml footstep.goal.points as visual-only geoms (reach_radius disc,
+# pole, yaw arrow) in a MuJoCo scene XML. Goals are in the spawn-anchored world
+# frame, which matches MuJoCo directly. Re-running replaces the marked region;
+# the first run seeds the scene from --base.
 #
 # Usage:
 #   python3 cmd/gen_goals.py
 #   python3 cmd/gen_goals.py --base scene_29dof_footstep.xml
-#
-# Then point the simulator at the generated scene:
-#   unitree_mujoco/simulate/config.yaml -> robot_scene: "scene_29dof_goals.xml"
 
 import argparse
 import math
@@ -114,8 +98,7 @@ def build_markers(points, reach_radius, pole_height):
             f'contype="0" conaffinity="0" group="2" rgba="{rgba}"/>'
         )
         if yaw is None:
-            continue  # heading is free for this goal: nothing to draw
-        # Arrow from the goal along the arrival heading, lying on the disc.
+            continue
         length = reach_radius * 1.5
         cx, cy = x + 0.5 * length * math.cos(yaw), y + 0.5 * length * math.sin(yaw)
         tx, ty = x + length * math.cos(yaw), y + length * math.sin(yaw)

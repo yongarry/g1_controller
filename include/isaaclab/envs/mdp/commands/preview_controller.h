@@ -1,13 +1,8 @@
 // Copyright (c) 2025, DYROS.
 // All rights reserved.
 //
-// Single-environment C++ port of
-//   tocabi_3d_footstep/mdp/preview_controller/preview_controller.py
-//
-// The discrete algebraic Riccati equation (DARE) for the preview controller is
-// solved on-device at construction by iterating the Riccati recursion, so no
-// offline gain export / scipy dependency is required. The gains depend only on
-// (zc, dt, NL), which are fixed for a given policy.
+// C++ port of tocabi_3d_footstep/mdp/preview_controller/preview_controller.py.
+// The DARE is solved on-device at construction; the gains depend only on (zc, dt, NL).
 
 #pragma once
 
@@ -52,12 +47,12 @@ public:
         // B_bar = [C B; B]
         B_bar(0) = (Cd * Bd)(0, 0);
         B_bar.segment<3>(1) = Bd;
-        Q_bar(0, 0) = 1.0; // Q_e
+        Q_bar(0, 0) = 1.0;
 
         Eigen::Matrix4d K = solve_dare(A_bar, B_bar, Q_bar, R);
 
         const double inv_term = 1.0 / (R + (B_bar.transpose() * K * B_bar)(0, 0));
-        Eigen::RowVector4d G = inv_term * (B_bar.transpose() * K * A_bar); // 1x4
+        Eigen::RowVector4d G = inv_term * (B_bar.transpose() * K * A_bar);
         G_i_ = static_cast<float>(G(0));
         G_x_ << static_cast<float>(G(1)), static_cast<float>(G(2)), static_cast<float>(G(3));
 
@@ -87,11 +82,10 @@ public:
     // vrp_ref: NL_ entries, each xyz. Returns the next preview state (3x3).
     Eigen::Matrix3f compute_target_state(const std::vector<math::Vec3>& vrp_ref)
     {
-        // C @ state -> (1x3) per-axis cart output; vrp_ref[0] is current ref
         Eigen::RowVector3f cart = C_ * state_;
         error_integral_ += (cart.transpose() - vrp_ref[0]);
 
-        Eigen::RowVector3f gx_state = G_x_ * state_; // (1x3)
+        Eigen::RowVector3f gx_state = G_x_ * state_;
         Eigen::Vector3f preview_sum = Eigen::Vector3f::Zero();
         for (int l = 1; l < NL_; ++l) preview_sum += G_d_[l] * vrp_ref[l];
 

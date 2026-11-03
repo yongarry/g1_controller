@@ -1,21 +1,12 @@
 #!/usr/bin/env python3
 # Copyright (c) 2025, DYROS.
 #
-# Summarize footstep tracking accuracy from a per-step eval CSV written by
-# State_Footstep (log/footstep_eval_<time>.csv) or State_MindYourStep
-# (log/footstep_eval_mys_<time>.csv). Errors are commanded minus measured
-# swing-foot landing, in the stance-foot frame. Both share the same schema.
+# Summarize footstep landing error (commanded - measured, stance-foot frame)
+# from log/footstep_eval[_mys]_<time>.csv written by State_Footstep /
+# State_MindYourStep. Defaults to the newest file.
 #
-# Footstep:
-#   ./run_sim.sh   # enter Footstep -> writes log/footstep_eval_YYMMDD_HHMMSS.csv
-#   python3 cmd/eval_footstep.py
-#
-# MindYourStep:
-#   ./run_sim.sh   # enter MindYourStep -> log/footstep_eval_mys_YYMMDD_HHMMSS.csv
-#   python3 cmd/eval_footstep.py --mys
-#
-# With no path args, the newest matching timestamped file is used. Pass paths
-# explicitly to pool several runs.
+# Usage:
+#   python3 cmd/eval_footstep.py [--mys] [csv ...]
 
 import argparse
 import csv
@@ -35,11 +26,9 @@ AXES = [("err_x", "x [m]"), ("err_y", "y [m]"), ("err_z", "z [m]"), ("err_yaw", 
 
 
 def latest_eval_csv(mys: bool) -> str:
-    """Newest timestamped eval CSV; ignore the non-mys pattern when --mys."""
     if mys:
         cands = sorted(glob.glob(DEFAULT_GLOB_MYS), key=os.path.getmtime)
     else:
-        # Footstep files are footstep_eval_<time>.csv, not footstep_eval_mys_*.
         cands = [
             p for p in glob.glob(DEFAULT_GLOB)
             if not os.path.basename(p).startswith("footstep_eval_mys")
@@ -99,7 +88,6 @@ def table(title, rows):
         print(f"  {label:10s} {s['mean']:+9.4f} {s['std']:9.4f} {s['rms']:9.4f} "
               f"{s['mae']:9.4f} {s['p50']:9.4f} {s['p90']:9.4f} "
               f"{s['p95']:9.4f} {s['max']:9.4f}")
-    # planar distance error, the single number usually quoted
     d = [math.hypot(float(r["err_x"]), float(r["err_y"])) for r in rows]
     s = stats(d)
     print(f"  {'|xy| [m]':10s} {s['mean']:9.4f} {s['std']:9.4f} {s['rms']:9.4f} "

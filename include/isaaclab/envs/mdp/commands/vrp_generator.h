@@ -1,18 +1,8 @@
 // Copyright (c) 2025, DYROS.
 // All rights reserved.
 //
-// Single-environment C++ port of
-//   tocabi_3d_footstep/mdp/preview_controller/vrp_generator.py :: generate_vrp_online
-//                                                                generate_com_heuristic_online
-//                                                                generate_com_heuristic_online2
-//
-// Generates the VRP (Virtual Repellent Point) reference trajectory and the CoM
-// yaw reference in the "first stance foot" frame, used by the preview controller
-// to produce the CoM/pelvis reference.
-//
-// The two generate_com_heuristic_online* variants are the ablation cases
-// (com_generate_type "heuri" / "heuri2"): they build the CoM reference directly
-// from the footstep phases, bypassing the preview controller entirely.
+// C++ port of tocabi_3d_footstep/mdp/preview_controller/vrp_generator.py.
+// VRP and CoM yaw references in the first-stance-foot frame.
 
 #pragma once
 
@@ -50,11 +40,8 @@ public:
 
     int NL() const { return NL_; }
 
-    // footstep_cmd: num_lookahead x 9  (x,y,z,r,p,yaw,ssp_t,dsp_t,height)
-    // vrp_state_init: 3   (zmp x,y; com z) in first-stance frame
-    // com_yaw_init: scalar
-    // swing_foot_start: 3 (current swing foot pos in first-stance frame)
-    // com_z_command: num_lookahead+1
+    // footstep_cmd rows: (x,y,z,r,p,yaw,ssp_t,dsp_t,height); vrp_state_init: (zmp x,y; com z);
+    // com_z_command: num_lookahead+1. Positions in the first-stance frame.
     void generate_vrp_online(const std::vector<std::array<float, 9>>& footstep_cmd,
                              const math::Vec3& vrp_state_init,
                              float com_yaw_init,
@@ -80,12 +67,10 @@ public:
         std::vector<Eigen::Vector4f> stance(LA, Eigen::Vector4f::Zero());
         std::vector<Eigen::Vector4f> swing(LA, Eigen::Vector4f::Zero());
 
-        // first step
         stance[0].setZero();
         stance[0][2] = vrp_height_ + com_z[0];
         swing[0][0] = stance[0][0] + step_x[0];
         swing[0][1] = stance[0][1] + step_y[0];
-        // h_0 + delta_h_2 + (com_z[1] - com_z[0])
         swing[0][2] = stance[0][2] + step_z[0] + (com_z[1] - com_z[0]);
         swing[0][3] = stance[0][3] + step_yaw[0];
 
@@ -96,12 +81,10 @@ public:
             const float sn = std::sin(stance[s][3]);
             swing[s][0] = stance[s][0] + c * step_x[s] - sn * step_y[s];
             swing[s][1] = stance[s][1] + sn * step_x[s] + c * step_y[s];
-            // swing[s][2] = stance[s][2] + com_z[s + 1];
             swing[s][2] = stance[s][2] + step_z[s] + (com_z[s + 1] - com_z[s]);
             swing[s][3] = stance[s][3] + step_yaw[s];
         }
 
-        // VRP horizontal offsets (per step)
         for (int s = 0; s < LA; ++s)
         {
             stance[s][0] -= phase_ind[s] * vrpy_offset_ * std::sin(stance[s][3]);
@@ -115,14 +98,12 @@ public:
             swing[s][1] += vrpx_offset_ * std::sin(swing[s][3]);
         }
 
-        // cache the target foot points and the phase timings for the heuristic
-        // CoM generators (they must be called right after this)
+        // cached for the heuristic CoM generators (they must be called right after this)
         stance_pts_ = stance;
         swing_pts_ = swing;
         ssp_t_ = ssp_t;
         dsp_t_ = dsp_t;
 
-        // build the per-tick reference over the VRP horizon
         std::fill(vrp_ref_firststance.begin(), vrp_ref_firststance.end(), math::Vec3::Zero());
         std::fill(CoM_yaw_ref_firststance.begin(), CoM_yaw_ref_firststance.end(), 0.0f);
         std::fill(CoM_yawvel_ref_firststance.begin(), CoM_yawvel_ref_firststance.end(), 0.0f);
@@ -143,7 +124,6 @@ public:
             const float prev_yaw_mid = (s == 0) ? com_yaw_init : 0.5f * (stance[s - 1][3] + swing[s - 1][3]);
             const float cur_yaw_mid = 0.5f * (stance[s][3] + swing[s][3]);
 
-            // DSP1: VRP moves prev_mid -> stance, CoM yaw stays at prev_yaw_mid
             for (int tk = dsp1_start; tk < dsp1_end && tk < NL_; ++tk)
             {
                 const float ct = (tk - dsp1_start) * dt_;
@@ -154,7 +134,6 @@ public:
                 CoM_yaw_ref_firststance[tk] = prev_yaw_mid;
                 CoM_yawvel_ref_firststance[tk] = 0.0f;
             }
-            // SSP: VRP stays at stance, CoM yaw moves prev_yaw_mid -> cur_yaw_mid
             for (int tk = dsp1_end; tk < ssp_end && tk < NL_; ++tk)
             {
                 const float ct = (tk - dsp1_end) * dt_;
@@ -163,7 +142,6 @@ public:
                 CoM_yaw_ref_firststance[tk] = math::cubic(prev_yaw_mid, 0.0f, cur_yaw_mid, 0.0f, ssp_t[s], ct, &yv);
                 CoM_yawvel_ref_firststance[tk] = yv;
             }
-            // DSP2: VRP moves stance -> mid(stance,swing), CoM yaw stays at cur_yaw_mid
             for (int tk = ssp_end; tk < dsp2_end && tk < NL_; ++tk)
             {
                 const float ct = (tk - ssp_end) * dt_;
@@ -177,7 +155,6 @@ public:
             }
             dsp1_start = dsp2_end;
         }
-        // remaining horizon: hold the last mid point
         const math::Vec3 last_mid = mid3(stance[LA - 1], swing[LA - 1]);
         const float last_yaw_mid = 0.5f * (stance[LA - 1][3] + swing[LA - 1][3]);
         for (int tk = dsp2_end; tk < NL_; ++tk)
@@ -188,17 +165,10 @@ public:
         }
     }
 
-    // --- ablation: heuristic CoM references (no preview control) -------------
-    // Both fill com_ref_firststance_heuristic / com_refvel_firststance_heuristic
-    // and MUST be called right after generate_vrp_online (they consume the
-    // target foot points and phase timings it cached).
-    // com_state_init is the CoM the trajectory starts from, in the first stance
-    // foot frame: the double-support midpoint (x, y) at the measured CoM height.
+    // Ablation CoM references (no preview control). MUST be called right after
+    // generate_vrp_online. com_state_init: double-support midpoint (x, y) at the measured CoM height.
 
     // com_generate_type == "heuri": hold - move - hold.
-    //   DSP1: hold at the previous double-support midpoint
-    //   SSP : cubic to the midpoint of the current stance foot and swing target
-    //   DSP2: hold at the new double-support midpoint
     void generate_com_heuristic_online(const math::Vec3& com_state_init)
     {
         const int LA = num_lookahead_;
@@ -215,13 +185,11 @@ public:
             const math::Vec3 prev_mid = (s == 0) ? com_state_init : mid3_(stance_pts_[s - 1], swing_pts_[s - 1]);
             const math::Vec3 cur_mid = mid3_(stance_pts_[s], swing_pts_[s]);
 
-            // DSP1: CoM holds at the previous double-support midpoint
             for (int tk = dsp1_start; tk < dsp1_end && tk < NL_; ++tk)
             {
                 com_ref_firststance_heuristic[tk] = prev_mid;
                 com_refvel_firststance_heuristic[tk] = math::Vec3::Zero();
             }
-            // SSP: CoM moves to the midpoint of the current stance foot and swing target
             for (int tk = dsp1_end; tk < ssp_end && tk < NL_; ++tk)
             {
                 const float ct = (tk - dsp1_end) * dt_;
@@ -231,7 +199,6 @@ public:
                 com_ref_firststance_heuristic[tk] = p;
                 com_refvel_firststance_heuristic[tk] = v;
             }
-            // DSP2: CoM holds at the new double-support midpoint
             for (int tk = ssp_end; tk < dsp2_end && tk < NL_; ++tk)
             {
                 com_ref_firststance_heuristic[tk] = cur_mid;
@@ -243,11 +210,7 @@ public:
     }
 
     // com_generate_type == "heuri2": the CoM keeps moving through every phase
-    // and sways toward the stance foot. Anchors for step k:
-    //   DSP1: M_{k-1} -> Q1 = (M_{k-1} + stance_k)/2
-    //   SSP : Q1      -> Q2 = (3*stance_k + swing_k)/4
-    //   DSP2: Q2      -> M_k = (stance_k + swing_k)/2
-    // All segments cubic with zero end velocities.
+    // and sways toward the stance foot.
     void generate_com_heuristic_online2(const math::Vec3& com_state_init)
     {
         const int LA = num_lookahead_;
@@ -268,7 +231,6 @@ public:
             const math::Vec3 q2 = 0.25f * (3.0f * stance_p + swing_p);
             const math::Vec3 cur_mid = 0.5f * (stance_p + swing_p);
 
-            // DSP1: prev midpoint -> toward the stance foot
             for (int tk = dsp1_start; tk < dsp1_end && tk < NL_; ++tk)
             {
                 const float ct = (tk - dsp1_start) * dt_;
@@ -278,7 +240,6 @@ public:
                 com_ref_firststance_heuristic[tk] = p;
                 com_refvel_firststance_heuristic[tk] = v;
             }
-            // SSP: -> quarter point between the stance foot and the new midpoint
             for (int tk = dsp1_end; tk < ssp_end && tk < NL_; ++tk)
             {
                 const float ct = (tk - dsp1_end) * dt_;
@@ -288,7 +249,6 @@ public:
                 com_ref_firststance_heuristic[tk] = p;
                 com_refvel_firststance_heuristic[tk] = v;
             }
-            // DSP2: -> the new double-support midpoint
             for (int tk = ssp_end; tk < dsp2_end && tk < NL_; ++tk)
             {
                 const float ct = (tk - ssp_end) * dt_;
@@ -303,7 +263,6 @@ public:
         hold_last_midpoint_(dsp2_end);
     }
 
-    // outputs
     std::vector<math::Vec3> vrp_ref_firststance;       // NL
     std::vector<float> CoM_yaw_ref_firststance;        // NL
     std::vector<float> CoM_yawvel_ref_firststance;     // NL
@@ -335,7 +294,6 @@ private:
     float vrpx_offset_, vrpy_offset_;
     int NL_;
 
-    // cached by generate_vrp_online for the heuristic CoM generators
     std::vector<Eigen::Vector4f> stance_pts_, swing_pts_; // [x, y, z, yaw]
     std::vector<float> ssp_t_, dsp_t_;
 };

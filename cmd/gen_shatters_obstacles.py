@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
 # Copyright (c) 2025, DYROS.
 #
-# Joystick-mode scatter: write a flat 10x10 ground plus randomly placed
-# irregular obstacles (shards) into a MuJoCo scene XML. No footstep CSV.
-# A 0.5x0.5 box at the origin is left empty so the robot can spawn clear.
-#
-# Obstacle full-extents are sampled independently per axis from --x/--y/--z.
+# Joystick-mode scatter: flat ground plus random box shards in a MuJoCo scene
+# XML (no footstep CSV); a keep-out box at the origin stays clear for spawning.
 #
 # Usage:
-#   python3 cmd/gen_shatters_obstacles.py
 #   python3 cmd/gen_shatters_obstacles.py --count 200 --z 0.005 0.03
-#   python3 cmd/gen_shatters_obstacles.py --x 0.01 0.03 --y 0.01 0.03 --z 0.005 0.02
 
 import argparse
 import math
@@ -37,7 +32,6 @@ def shard_rgba(rng):
 
 
 def in_start_clear(x, y, clear_xy):
-    """True if (x, y) is inside the axis-aligned keep-out box at the origin."""
     hx, hy = 0.5 * clear_xy[0], 0.5 * clear_xy[1]
     return abs(x) < hx and abs(y) < hy
 

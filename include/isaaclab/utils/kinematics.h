@@ -1,20 +1,10 @@
 // Copyright (c) 2025, DYROS.
 // All rights reserved.
 //
-// Pinocchio-backed kinematics for the G1 footstep deploy controller.
-//
-// The model is loaded as a FIXED-BASE model rooted at `pelvis`, so every frame
-// placement / velocity / Jacobian returned by this helper is expressed in the
-// PELVIS (base) frame. The command generator anchors its "global" frame at the
-// pelvis each control tick (see footstep_command.h), so this is exactly what it
-// needs.
-//
-// State-estimation assumption (no floating-base estimator on hardware):
-//   - the pelvis is treated as fixed when computing frame/CoM velocities, i.e.
-//     base linear & angular velocity are taken to be zero. Reported velocities
-//     therefore reflect joint motion only. This is the standard assumption when
-//     no base velocity estimate is available; the planted stance foot makes it
-//     a good approximation for the quantities the command generator consumes.
+// Pinocchio kinematics for the G1 footstep controller. FIXED-BASE model rooted at
+// `pelvis`, so every placement / velocity / Jacobian is in the PELVIS frame.
+// No base estimator on hardware: base velocity is taken as zero, so velocities
+// reflect joint motion only (a good approximation with a planted stance foot).
 
 #pragma once
 
@@ -57,14 +47,13 @@ public:
         q_ = Eigen::VectorXd::Zero(model_.nq);
         v_ = Eigen::VectorXd::Zero(model_.nv);
 
-        // Build pinocchio-config-index -> sdk-motor-index map for all 1-dof joints.
-        // model_.joints[1..] are the movable joints (index 0 is the universe).
+        // Joint index 0 is the universe.
         for (pinocchio::JointIndex jid = 1; jid < (pinocchio::JointIndex)model_.njoints; ++jid)
         {
             const std::string& jname = model_.names[jid];
             auto it = name_to_sdk.find(jname);
             if (it == name_to_sdk.end())
-                continue; // skip joints that aren't actuated motors (e.g. fixed)
+                continue;
             const int qidx = model_.idx_qs[jid];
             qidx_to_sdk_[qidx] = it->second;
         }
@@ -134,15 +123,13 @@ public:
         const pinocchio::FrameIndex fid = (s == LEFT) ? lee_fid_ : ree_fid_;
         const int n = static_cast<int>(idx.size());
 
-        // local working configuration; reuse preallocated ik_data_ (do not
-        // disturb the cached query state in data_).
+        // Uses ik_data_ so the cached query state in data_ is not disturbed.
         Eigen::VectorXd q = q_;
         for (int i = 0; i < n; ++i) q(idx[i]) = static_cast<double>(q_init(i));
 
         pinocchio::Data& data = ik_data_;
         const double lam2 = static_cast<double>(lambda) * static_cast<double>(lambda);
 
-        // Allocated once per call, not per iteration.
         pinocchio::Data::Matrix6x Jfull = pinocchio::Data::Matrix6x::Zero(6, model_.nv);
         Eigen::Matrix<double, 6, Eigen::Dynamic> J(6, n);
         Eigen::Matrix<double, Eigen::Dynamic, 1> dq(n);
@@ -175,10 +162,8 @@ public:
             Jfull.setZero();
             pinocchio::getFrameJacobian(model_, data, fid, pinocchio::LOCAL_WORLD_ALIGNED, Jfull);
 
-            // restrict to leg columns
             for (int i = 0; i < n; ++i) J.col(i) = Jfull.col(idx[i]);
 
-            // DLS:  dq = J^T (J J^T + lam^2 I)^-1 err
             Eigen::Matrix<double, 6, 6> JJt = J * J.transpose();
             JJt.diagonal().array() += lam2;
             dq.noalias() = J.transpose() * JJt.ldlt().solve(err);

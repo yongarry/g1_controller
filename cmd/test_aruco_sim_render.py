@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # Copyright (c) 2025, DYROS.
 #
-# End-to-end validation of the sim ArUco footstep pipeline WITHOUT DDS:
-# load the footstep scene, pose the robot at the spawn keyframe, render the
-# D435i camera offscreen, detect the markers, run per-target PnP, and compare
-# the estimated target poses against the model ground truth.
+# Validate the sim ArUco pipeline without DDS: render the D435i at the spawn
+# keyframe, detect + PnP each target, and compare against the board ground truth.
 #
 # Run after cmd/gen_aruco_footstep_scene.py:
 #   python3 cmd/test_aruco_sim_render.py [--save /tmp/d435i_view.png]
@@ -66,7 +64,6 @@ def main():
     rgb = renderer.render()
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
 
-    # intrinsics from fovy
     fovy = math.radians(model.cam_fovy[cam_id])
     fy = fx = (args.height / 2.0) / math.tan(fovy / 2.0)
     K = np.array([[fx, 0, args.width / 2.0],
@@ -79,7 +76,6 @@ def main():
     ids = ids.ravel() if ids is not None else np.array([], int)
     print(f"detected {len(ids)} markers: {sorted(ids.tolist())}")
 
-    # ground-truth camera pose (world)
     cw_p = data.cam_xpos[cam_id].copy()
     cw_R = data.cam_xmat[cam_id].reshape(3, 3).copy()
     cv_R = cw_R @ R_MUJ_CV          # world <- cv optical
@@ -87,7 +83,6 @@ def main():
     if len(ids):
         cv2.aruco.drawDetectedMarkers(vis, corners, ids.reshape(-1, 1))
 
-    # group by target and solve PnP
     groups = {}
     for c, mid in zip(corners, ids):
         if int(mid) not in obj_points:
@@ -117,7 +112,6 @@ def main():
         reproj = float(np.linalg.norm(proj.reshape(-1, 2) - ip, axis=1).mean())
 
         R_ct, _ = cv2.Rodrigues(rvec)  # cv cam <- target
-        # estimated target pose in world
         tw_R = cv_R @ R_ct
         tw_p = cv_R @ tvec.ravel() + cw_p
 

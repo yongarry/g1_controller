@@ -91,7 +91,6 @@ REGISTER_OBSERVATION(motion_command)
 
 REGISTER_OBSERVATION(motion_anchor_ori_b)
 {
-    // auto & robot = env->robot;
     auto real_quat_w = torso_quat_w(env);
     auto ref_quat_w = anchor_quat_w(State_Mimic::motion);
 
@@ -120,7 +119,6 @@ State_Mimic::State_Mimic(int state_mode, std::string state_string)
         motion_file = param::proj_dir / motion_file;
     }
 
-    // Motion
     motion_ = std::make_shared<MotionLoader_>(motion_file.string(), cfg["fps"].as<float>());
     spdlog::info("Loaded motion file '{}' with duration {:.2f}s", motion_file.stem().string(), motion_->duration);
     motion = motion_;
@@ -152,7 +150,7 @@ State_Mimic::State_Mimic(int state_mode, std::string state_string)
     );
     this->registered_checks.emplace_back(
         std::make_pair(
-            [&]()->bool{ return isaaclab::mdp::bad_orientation(env.get(), 1.0); }, // bad orientation
+            [&]()->bool{ return isaaclab::mdp::bad_orientation(env.get(), 1.0); },
             FSMStringMap.right.at("Passive")
         )
     );
@@ -160,7 +158,6 @@ State_Mimic::State_Mimic(int state_mode, std::string state_string)
 
 void State_Mimic::enter()
 {
-    // set gain
     for (int i = 0; i < env->robot->data.joint_stiffness.size(); ++i)
     {
         lowcmd->msg_.motor_cmd()[i].kp() = env->robot->data.joint_stiffness[i];
@@ -171,7 +168,6 @@ void State_Mimic::enter()
 
     motion = motion_; // set for specific motion
     env->reset();
-    // Start policy thread
     policy_ready_ = false;
     policy_thread_running = true;
     policy_thread = std::thread([this]{
@@ -179,7 +175,6 @@ void State_Mimic::enter()
         const std::chrono::duration<double> desiredDuration(env->step_dt);
         const auto dt = std::chrono::duration_cast<clock::duration>(desiredDuration);
 
-        // Initialize timing
         const auto start = clock::now();
         auto sleepTill = start + dt;
 
@@ -196,7 +191,6 @@ void State_Mimic::enter()
             env->step();
             policy_ready_ = true;
 
-            // Sleep
             std::this_thread::sleep_until(sleepTill);
             sleepTill += dt;
         }

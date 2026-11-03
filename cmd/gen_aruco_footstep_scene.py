@@ -1,33 +1,13 @@
 #!/usr/bin/env python3
 # Copyright (c) 2025, DYROS.
 #
-# Like cmd/gen_footstep_scene.py, but each stepping stone additionally gets
-# FOUR ArUco markers (3x3-bit, "3 cm" class) on its top surface so an onboard
-# camera (D435i) can estimate the pose precisely (16 corner points per target
-# -> robust PnP). Stone XY uses yaw-frame --offset-*; red/blue spheres stay on
-# the raw CSV targets. ArUco geoms + board.json follow the stone landings.
-#
-# Outputs:
-#   1. Scene XML edits (same marked region as gen_footstep_scene.py for the
-#      geoms + an extra marked region in <asset> for marker textures). All
-#      prior generator regions (footstep / rocky / aruco) are stripped first.
-#   2. Marker texture PNGs      -> <xml_dir>/aruco_markers/marker_###.png
-#   3. Board metadata JSON      -> config/aruco_board.json (read by
-#      cmd/aruco_footstep_perception.py to build PnP object points)
-#   4. Printable per-target sheets (real world) -> <xml_dir>/aruco_markers/
-#      sheet_target_##.png at --dpi (markers at true physical scale).
-#   5. Single multi-page PDF (all targets) -> <xml_dir>/aruco_markers/
-#      footstep_aruco_sheets.pdf: one target sheet per A4 page at true
-#      physical scale (large sheets may clip at the page edge).
-#
-# Marker ids: target i owns ids [4i, 4i+1, 4i+2, 4i+3]
-#   (front-left, front-right, back-right, back-left in the target frame;
-#    x = footstep yaw direction, origin = footstep center on the top surface).
+# Like gen_footstep_scene.py, but each stepping stone also gets four ArUco
+# markers (layout in aruco_common.py) for D435i PnP. Writes the scene XML
+# regions (prior footstep/rocky/aruco regions are stripped first), textures and
+# printable sheets/PDF in <xml_dir>/aruco_markers/, and config/aruco_board.json.
 #
 # Usage:
 #   python3 cmd/gen_aruco_footstep_scene.py
-#   python3 cmd/gen_aruco_footstep_scene.py --marker-size 0.03 --marker-spread 0.05
-#   python3 cmd/gen_aruco_footstep_scene.py --shape box --size 0.1 0.08
 #   python3 cmd/gen_aruco_footstep_scene.py --shape box --size 0.1 0.08 0.02
 #   python3 cmd/gen_aruco_footstep_scene.py --stair
 
@@ -79,7 +59,7 @@ def inject_region(xml_text, block, begin, end, closing_tag):
 
 
 def write_marker_textures(dictionary, n_targets, tex_dir, quiet_modules, bits):
-    # wipe previous textures/sheets so a shorter target list leaves no orphans
+    # Wipe so a shorter target list leaves no orphan textures.
     if os.path.isdir(tex_dir):
         shutil.rmtree(tex_dir)
     os.makedirs(tex_dir, exist_ok=True)
@@ -87,8 +67,7 @@ def write_marker_textures(dictionary, n_targets, tex_dir, quiet_modules, bits):
     for mid in range(ac.MARKERS_PER_TARGET * n_targets):
         img, scale = ac.marker_image(dictionary, mid, modules_px=32,
                                      quiet_modules=quiet_modules, bits=bits)
-        # MuJoCo +Z maps PNG row 0 -> +y; rotate CW so sim matches the print
-        # sheet (raw OpenCV bitmap, arrow up = +x_target).
+        # MuJoCo +Z maps PNG row 0 -> +y; rotate CW so sim matches the print sheet.
         img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
         cv2.imwrite(os.path.join(tex_dir, f"marker_{mid:03d}.png"), img)
     return scale
@@ -108,10 +87,7 @@ def build_marker_assets(n_markers, tex_rel_dir):
 
 
 def build_marker_geoms(stones, marker_size, marker_spread, tex_scale):
-    """Visual-only textured thin boxes on each stepping-stone top face.
-
-    `stones` from stone_landing_poses() (yaw-frame XY offset already applied).
-    """
+    """Visual-only textured thin boxes on each stone top face (from stone_landing_poses)."""
     half = marker_size * tex_scale / 2.0  # geom includes the white quiet zone
     centers = ac.marker_centers(marker_spread)
     lines = []
@@ -199,16 +175,12 @@ def _draw_cut_guides(c, x0, y0, side_pts, mark_len=10, gap=3):
     c.setStrokeColorRGB(0.45, 0.45, 0.45)
     c.setLineWidth(0.4)
     g, m = gap, mark_len
-    # bottom-left
     c.line(x0 - g - m, y0, x0 - g, y0)
     c.line(x0, y0 - g - m, x0, y0 - g)
-    # bottom-right
     c.line(x1 + g, y0, x1 + g + m, y0)
     c.line(x1, y0 - g - m, x1, y0 - g)
-    # top-left
     c.line(x0 - g - m, y1, x0 - g, y1)
     c.line(x0, y1 + g, x0, y1 + g + m)
-    # top-right
     c.line(x1 + g, y1, x1 + g + m, y1)
     c.line(x1, y1 + g, x1, y1 + g + m)
 
@@ -284,7 +256,6 @@ if __name__ == "__main__":
                    help="place stepping-stone cubes at world y=0 so left/right "
                         "treads share a lateral line; ArUco and foot-target "
                         "spheres stay on the CSV landings")
-    # marker parameters
     p.add_argument("--marker-size", type=float, default=ac.DEFAULT_MARKER_SIZE,
     # p.add_argument("--marker-size", type=float, default=0.06,
                    help="black-border side length [m] (default 0.06 = 6 cm; "
@@ -314,12 +285,10 @@ if __name__ == "__main__":
     dictionary = ac.make_dictionary(args.dict_bits, dict_size, args.dict_seed)
 
     off = (args.offset_x, args.offset_y, args.offset_z)
-    # Cubes may collapse to y=0 (--stair); ArUco stay on the CSV landings
-    # (same XY as the red/blue spheres, plus yaw-frame --offset-*).
+    # Cubes may collapse to y=0 (--stair); ArUco stay on the CSV landings.
     work = prepare_rows(rows, center_y=args.center)
     aruco_poses = stone_landing_poses(work, off, stair=False)
 
-    # 1) footstep pillar/platform/ground + CSV spheres
     geom_block, z_ground, z_min = build_footsteps(
         rows, args.shape, args.size, off, center_y=args.center,
         plane_margin=args.plane_margin,
@@ -327,7 +296,6 @@ if __name__ == "__main__":
         platform_top=args.platform_top,
         stair=args.stair)
 
-    # 2) ArUco textures + geoms on the original landings (not stair y=0)
     xml_dir = os.path.dirname(os.path.abspath(args.xml))
     tex_dir = os.path.join(xml_dir, "aruco_markers")
     tex_scale = write_marker_textures(dictionary, n_targets, tex_dir,
@@ -338,7 +306,6 @@ if __name__ == "__main__":
                                     f"\n{marker_geoms}\n    {END_MARK}")
     asset_block = build_marker_assets(n_markers, "aruco_markers")
 
-    # 3) board metadata = ArUco top-surface centers
     targets_meta = [
         {"index": i, "foot": s["foot"],
          "world": {"x": s["sx"], "y": s["sy"], "z": s["sz"], "yaw": s["yaw"]}}
@@ -348,16 +315,15 @@ if __name__ == "__main__":
                   args.dict_seed, args.marker_size, args.marker_spread,
                   args.quiet_modules)
 
-    # 4) inject into scene XML (inject strips rocky/footstep/aruco regions first)
+    # inject() strips rocky/footstep/aruco regions first.
     with open(args.xml) as f:
         xml_text = f.read()
     xml_text = strip_start_platform(xml_text)
-    xml_text = inject(xml_text, geom_block)                      # worldbody
-    xml_text = inject_region(xml_text, asset_block, ASSET_BEGIN,  # assets
+    xml_text = inject(xml_text, geom_block)
+    xml_text = inject_region(xml_text, asset_block, ASSET_BEGIN,
                              ASSET_END, "</asset>")
     write_scene(args.xml, xml_text)
 
-    # 5) printable sheets + PDF
     pdf_path = None
     if not args.no_sheets:
         write_print_sheets(dictionary, rows, tex_dir, args.marker_size,

@@ -1,17 +1,8 @@
 // Copyright (c) 2025, DYROS.
 // All rights reserved.
 //
-// Foot-command source abstraction for State_Footstep.
-//
-// The footstep planner (FootstepCommand) consumes a single nominal
-// FootCommandInput each control tick, sampled at step boundaries. This file
-// wraps "where that input comes from" behind a small interface so the source
-// can be selected from deploy.yaml without touching the planner / policy:
-//
-//   * JoystickFootCommandSource - the original, default behaviour (unchanged).
-//   * CSVFootCommandSource       - replays foot commands from footcommands.csv.
-//
-// Selected via `footstep.command_source` ("joystick" | "csv") in deploy.yaml.
+// Foot-command sources for State_Footstep, selected via `footstep.command_source`
+// ("joystick" | "csv") in deploy.yaml.
 
 #pragma once
 
@@ -35,8 +26,7 @@
 namespace isaaclab
 {
 
-// Operator-driven nominal foot-step command (clamped to trained ranges by the
-// planner). This is the single unit both command sources produce.
+// Nominal foot-step command (clamped to trained ranges by the planner).
 struct FootCommandInput
 {
     float step_x = 0.0f;   // forward step length [m]
@@ -47,18 +37,12 @@ struct FootCommandInput
     float dsp_t = 0.15f;   // double support time [s]
     float height = 0.075f; // swing apex height [m]
     float com_z = 0.0f;    // com height offset [m]
-    // Lateral crab-walk bias [m]: positive = net shift to +y (left). Applied
-    // asymmetrically per swing foot in FootstepCommand::build_foot_command_:
-    // left swing widens (+bias), right swing narrows (-bias).
+    // Lateral crab-walk bias [m], positive = +y (left): left swing widens, right swing narrows.
     float lateral_bias = 0.0f;
 };
 
-// Absolute (world-frame) foot-step target used by the "global" command mode.
-// One entry per planned footstep: the SWING foot's landing pose plus the same
-// timing/height/com fields carried by FootCommandInput. Positions are expressed
-// in the initial-stance-foot frame (the first stance foot is the world origin),
-// so the planner accumulates the achieved stance pose and recomputes the local
-// command from the measured stance foot to the indexed target every step.
+// SWING-foot landing pose for the global command mode, in the initial-stance-foot
+// frame (the first stance foot is the world origin).
 struct GlobalFootTarget
 {
     float x = 0.0f;      // world swing-landing x [m]
@@ -72,31 +56,21 @@ struct GlobalFootTarget
     int phase = 0;       // 0: right foot swings, 1: left foot swings
 };
 
-// ---------------------------------------------------------------------------
-// Interface
-// ---------------------------------------------------------------------------
 class FootCommandSource
 {
 public:
     virtual ~FootCommandSource() = default;
-    // Nominal command for the current tick (read every control tick).
     virtual FootCommandInput input() = 0;
-    // Whole scripted plan, one row per footstep (empty for an operator-driven
-    // source). The planner builds each lookahead slot from its own row.
+    // One row per footstep; empty for an operator-driven source.
     virtual std::vector<FootCommandInput> plan() const { return {}; }
-    // Number of commands in a scripted (finite) source, 0 for an operator-driven
-    // one. A scripted source needs no aiming, so the caller starts walking on
-    // state entry instead of waiting for the operator, and stops once this many
-    // footsteps have been completed.
+    // 0 for an operator-driven source. A scripted source starts walking on state
+    // entry and stops once this many footsteps have been completed.
     virtual int size() const { return 0; }
     // Initial swing-foot phase (0: right swings first, 1: left swings first).
     virtual int start_phase_indicator() const { return 0; }
     virtual const char* name() const = 0;
 };
 
-// ---------------------------------------------------------------------------
-// Joystick source (original behaviour, unchanged mapping)
-// ---------------------------------------------------------------------------
 class JoystickFootCommandSource : public FootCommandSource
 {
 public:
@@ -118,10 +92,8 @@ public:
             rx = joy_->rx();
         }
         if (kbd_) kbd_->apply_stick_axes(ly, lx, rx);
-        in.step_x = ly * x_;        // forward
-        in.step_yaw = -rx * yaw_;   // turn
-        // lateral crab-walk: bias is applied per swing foot in the planner
-        // (left swing widens, right swing narrows for positive bias).
+        in.step_x = ly * x_;
+        in.step_yaw = -rx * yaw_;
         in.lateral_bias = -lx * y_;
         return in;
     }
@@ -137,9 +109,6 @@ private:
     int start_phase_;
 };
 
-// ---------------------------------------------------------------------------
-// CSV source (replays footcommands.csv in order; the planner indexes plan())
-// ---------------------------------------------------------------------------
 class CSVFootCommandSource : public FootCommandSource
 {
 public:
@@ -191,7 +160,6 @@ private:
             throw std::runtime_error("CSVFootCommandSource: cannot open file: " + path);
 
         std::string line;
-        // header
         if (!std::getline(f, line))
             throw std::runtime_error("CSVFootCommandSource: empty file: " + path);
         std::vector<std::string> header = split_(line);
@@ -224,17 +192,16 @@ private:
         {
             ++line_no;
             const std::string trimmed = trim_(line);
-            if (trimmed.empty()) continue; // skip blank lines
+            if (trimmed.empty()) continue;
             std::vector<std::string> cells = split_(line);
             if ((int)cells.size() < (int)header.size())
                 throw std::runtime_error("CSVFootCommandSource: too few columns at line " +
                                          std::to_string(line_no) + " in " + path);
 
-            // foot label
             const std::string foot = lower_(cells[col["foot"]]);
             int phase;
-            if (foot == "r" || foot == "right") phase = 0;       // right swing
-            else if (foot == "l" || foot == "left") phase = 1;   // left swing
+            if (foot == "r" || foot == "right") phase = 0;
+            else if (foot == "l" || foot == "left") phase = 1;
             else throw std::runtime_error("CSVFootCommandSource: invalid foot label '" +
                                           cells[col["foot"]] + "' at line " + std::to_string(line_no) +
                                           " (expected L/R/left/right) in " + path);
@@ -259,7 +226,6 @@ private:
 
         start_phase_ = phases_.front();
 
-        // sanity: footsteps should alternate feet
         for (size_t i = 1; i < phases_.size(); ++i)
             if (phases_[i] == phases_[i - 1])
             {
@@ -277,14 +243,6 @@ private:
     int start_phase_ = 0;
 };
 
-// ---------------------------------------------------------------------------
-// Global-plan loader (footcommands_global.csv)
-//
-// Reads a per-row CSV of absolute (world-frame) swing-foot landing targets:
-//   foot,pos_x,pos_y,pos_z,yaw,ssp_t,dsp_t,height[,com_z]
-// `foot` (L/R) sets the swing phase per step (matches the local CSV). The
-// returned plan is consumed by FootstepCommand in "global" command mode.
-// ---------------------------------------------------------------------------
 inline std::vector<GlobalFootTarget> load_global_foot_plan(const std::string& path,
                                                            const GlobalFootTarget& def = GlobalFootTarget{})
 {
@@ -377,9 +335,6 @@ inline std::vector<GlobalFootTarget> load_global_foot_plan(const std::string& pa
     return plan;
 }
 
-// ---------------------------------------------------------------------------
-// Factory (selects the source from the deploy.yaml `footstep` node)
-// ---------------------------------------------------------------------------
 inline std::unique_ptr<FootCommandSource> make_foot_command_source(
     const YAML::Node& fs,
     const std::filesystem::path& proj_dir,
