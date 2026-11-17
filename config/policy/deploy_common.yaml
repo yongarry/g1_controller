@@ -1,0 +1,136 @@
+# Shared deploy settings of the yonglab G1-3d-Joystick tracker (stage 1) and footstep planner (stage 2).
+# stage1/params/deploy.yaml and stage2/params/deploy.yaml extend this file (nested maps deep-merge).
+# Values are the training settings (tools/dump_isaac.py writes them to golden/config.txt).
+
+policy_file: policy.onnx   # exported/ of the stage folder (tools/export_onnx.py)
+
+# --- lower body (action manager), SDK indices 0..11 ---
+joint_ids_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+step_dt: 0.02
+stiffness: [100.0, 100.0, 100.0, 150.0, 40.0, 40.0,
+            100.0, 100.0, 100.0, 150.0, 40.0, 40.0]
+damping: [2.0, 2.0, 2.0, 4.0, 2.0, 2.0,
+          2.0, 2.0, 2.0, 4.0, 2.0, 2.0]
+default_joint_pos: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
+                    -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
+actions:
+  LowerJointPositionAction:
+    joint_ids: null
+    clip: null
+    scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    offset: [-0.4, 0.0, 0.0, 0.9, -0.5, 0.0,
+             -0.4, 0.0, 0.0, 0.9, -0.5, 0.0]
+
+# --- upper body: held at its default pose, SDK indices 12..28 ---
+# shortcut: gains of the earlier deploy (training: waist kp 600, arm kd 1); re-tune on the robot if the torso sways
+upper_body:
+  joint_ids_map: [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+  default_joint_pos: [0.0, 0.0, 0.2,
+                      0.1, 0.2, 0.0, 1.1, 0.0, 0.0, 0.0,
+                      0.1, -0.2, 0.0, 1.1, 0.0, 0.0, 0.0]
+  stiffness: [200.0, 200.0, 200.0,
+              40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0,
+              40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
+  # arms kd 1 as in training: kd 10 made the arms chatter at 70-80 Hz in MuJoCo (2026-11-17, ~3 rad/s RMS -> 0.03)
+  damping: [5.0, 5.0, 5.0,
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+# 10 frames, 2 steps apart; frame = [ang vel, gravity, leg q, leg qd, IK target, phase, footstep pose (6), last q_des]
+observations:
+  base_ang_vel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  use_gym_history: true
+  projected_gravity:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_pos_ordered_rel:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_vel_ordered:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  joint_ik_target:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  phase:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  foot_commands_pose:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+  last_processed_action:
+    params: {}
+    scale: null
+    clip: null
+    history_length: 10
+    skip_history_tick: 2
+
+
+# --- footstep command (RISE reference + JoystickFootCommand) ---
+footstep:
+  eval_file: log/footstep_eval.csv   # per-step landing error, a timestamped file per entry; "" disables
+  future_foot_step_num: 2
+  vrp_height: 0.6258
+  pelv_com_offset: 0.0678
+  vrpx_offset: 0.03
+  vrpy_offset: 0.02
+  vrp_horizon_length: 4.0
+  preview_horizon_length: 1.6
+  com_generate_type: prev
+  swing_up_timing: 0.2
+  swing_down_timing: 0.6
+  ik_iters: 15
+  ik_lambda: 0.05
+  ik_pos_tol: 0.0001
+  urdf_path: config/urdf/g1_29dof.urdf
+  base_link: pelvis
+  lleg_joints: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint,
+                left_knee_joint, left_ankle_pitch_joint, left_ankle_roll_joint]
+  rleg_joints: [right_hip_pitch_joint, right_hip_roll_joint, right_hip_yaw_joint,
+                right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint]
+  lee_name: left_ankle_roll_link
+  ree_name: right_ankle_roll_link
+  start_phase_indicator: 0   # 0: the right foot swings first
+  # fk_odometry: leg odometry + IMU heading (the robot). sim_odom: MuJoCo's true base position (rt/odommodestate)
+  foot_state_source: fk_odometry
+  sim_odom_topic: rt/odommodestate
+  ranges:                    # JoystickFootCommandCfg.sample_ranges (|y|)
+    foot_pos_x: [-0.3, 0.4]
+    foot_pos_y: [0.2, 0.4]
+    foot_pos_z: [-0.2, 0.2]
+    foot_rot_y: [-0.8, 0.8]
+  planner:
+    joystick_max: [0.5, 0.15, 0.5] # |vx|, |vy|, |yaw rate| of the shortest footstep time
+    step_time: [1.0, 0.65]         # footstep time [s] at zero / at the largest velocity
+    ssp_ratio: 0.8
+    stance_width: 0.237
+    foot_height: 0.08
+    reset_ssp: 0.6                 # the two in-place footsteps after walk start
+    reset_dsp: 0.1
+    velocity:                      # full stick deflection -> velocity command; keep inside the policy's training range
+      vx: [-0.1, 0.5]              # sm_joy_v2 tracker; sm_joy_v3_back (2026-11-16) is trained to -0.3
+      vy: 0.15
+      wz: 0.5

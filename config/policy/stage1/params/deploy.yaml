@@ -1,0 +1,9 @@
+# Stage 1: the blind tracker on nominal footsteps from the joystick (x = vx T, y = +-0.237 + vy T, yaw = wz T, z = 0).
+# Flat ground only: the footsteps ignore the terrain. exported/policy.onnx = the tracker (sm_joy_v3_back model_5000,
+# 2026-11-16; the previous sm_joy_v2 tracker is exported/policy_sm_joy_v2.onnx.bak).
+extends: ../../deploy_common.yaml
+footstep:
+  mode: stage1
+  planner:
+    velocity:
+      vx: [-0.3, 0.5]              # sm_joy_v3_back is trained on -0.3 .. 0.5 m/s

@@ -59,3 +59,6 @@ add_library(${PROJECT_NAME}_lib ${ADD_SRC_LIST})
 link_libraries(${PROJECT_NAME}_lib)
 
 add_executable(g1_ctrl main.cpp)
+
+# Replays a recording of the yonglab deploy configuration in Isaac (tools/dump_isaac.py) through FootstepCommand.
+add_executable(planner_replay_test test/planner_replay_test.cpp)

@@ -26,6 +26,24 @@
 namespace isaaclab
 {
 
+// Actuated joint URDF name -> Unitree SDK motor index (G1 29-DoF).
+inline std::map<std::string, int> g1_name_to_sdk()
+{
+    return {
+        {"left_hip_pitch_joint", 0}, {"left_hip_roll_joint", 1}, {"left_hip_yaw_joint", 2},
+        {"left_knee_joint", 3}, {"left_ankle_pitch_joint", 4}, {"left_ankle_roll_joint", 5},
+        {"right_hip_pitch_joint", 6}, {"right_hip_roll_joint", 7}, {"right_hip_yaw_joint", 8},
+        {"right_knee_joint", 9}, {"right_ankle_pitch_joint", 10}, {"right_ankle_roll_joint", 11},
+        {"waist_yaw_joint", 12}, {"waist_roll_joint", 13}, {"waist_pitch_joint", 14},
+        {"left_shoulder_pitch_joint", 15}, {"left_shoulder_roll_joint", 16}, {"left_shoulder_yaw_joint", 17},
+        {"left_elbow_joint", 18}, {"left_wrist_roll_joint", 19}, {"left_wrist_pitch_joint", 20},
+        {"left_wrist_yaw_joint", 21},
+        {"right_shoulder_pitch_joint", 22}, {"right_shoulder_roll_joint", 23}, {"right_shoulder_yaw_joint", 24},
+        {"right_elbow_joint", 25}, {"right_wrist_roll_joint", 26}, {"right_wrist_pitch_joint", 27},
+        {"right_wrist_yaw_joint", 28},
+    };
+}
+
 class Kinematics
 {
 public:
@@ -83,6 +101,22 @@ public:
     }
 
     // ---- queries (all in the pelvis/base frame) ----
+    pinocchio::FrameIndex frame_index(const std::string& name) const
+    {
+        const auto f = model_.getFrameId(name);
+        if (f >= (pinocchio::FrameIndex)model_.nframes)
+            throw std::runtime_error("Kinematics: frame '" + name + "' not found in URDF.");
+        return f;
+    }
+    math::Vec3 frame_pos(pinocchio::FrameIndex f) const
+    {
+        return data_.oMf[f].translation().cast<float>();
+    }
+    math::Quat frame_quat(pinocchio::FrameIndex f) const
+    {
+        Eigen::Quaterniond q(data_.oMf[f].rotation());
+        return math::Quat(q.w(), q.x(), q.y(), q.z()).cast<float>().normalized();
+    }
     math::Vec3 foot_pos(Side s) const
     {
         const auto& M = data_.oMf[s == LEFT ? lee_fid_ : ree_fid_];

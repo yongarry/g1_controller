@@ -3,7 +3,7 @@
 # (g1_ctrl) together. The simulator is started first; once it is up the
 # controller connects over the chosen network (default: loopback "lo").
 #
-# The controller runs in the FOREGROUND so keyboard FSM keys (f/h/v/g/m/p)
+# The controller runs in the FOREGROUND so keyboard FSM keys (f/j/k/g/p, WASD/QE)
 # reach g1_ctrl. Type in this terminal, not the MuJoCo window.
 #
 # Ctrl+C (or either process exiting) tears down both.
@@ -28,8 +28,8 @@ SIM_WAIT="${SIM_WAIT:-2}"   # seconds to let the simulator come up before the co
 
 # Overrides unitree_mujoco/simulate/config.yaml (no need to edit that file).
 ROBOT="g1"
-SCENE="scene_29dof_footstep.xml"
-# SCENE="scene_29dof_stair.xml"
+# scene_course.xml: the stage-2 course (stairs, stepping stones, gaps, step-ups, blocks); scene_flat.xml for stage 1
+SCENE="${SCENE:-scene_course.xml}"
 
 # --- sanity checks ---------------------------------------------------------
 [[ -x "$MUJOCO_DIR/$MUJOCO_BIN" ]] || { echo "[run] missing simulator: $MUJOCO_DIR/$MUJOCO_BIN" >&2; exit 1; }
@@ -62,7 +62,7 @@ fi
 
 # --- 2) controller (foreground so this terminal's keys reach g1_ctrl) ------
 echo "[run] starting controller: $CTRL_BIN --network $NETWORK"
-echo "[run] sim pid ${pids[0]}. Type keys in THIS terminal (f/h/v/g/m/p). Ctrl+C stops both."
+echo "[run] sim pid ${pids[0]}. Type keys in THIS terminal: f FixStand, j Stage1, k Stage2, g walk, WASD/QE, p Passive. Ctrl+C stops both."
 
 cd "$CTRL_DIR"
 export LD_LIBRARY_PATH="$ONNX_LIB:${LD_LIBRARY_PATH:-}"

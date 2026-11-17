@@ -1,33 +1,23 @@
+# FSM of the footstep-planner deploy: Passive -> FixStand -> Stage1 / Stage2.
+#   Stage1: the tracker on nominal footsteps from the joystick, z = 0 (blind; flat ground only)
+#   Stage2: the tracker on footsteps picked by the depth planner
+# Inside Stage1 / Stage2 the robot stands until Y (or 'g'), then walks with the joystick (or WASD / QE).
 FSM:
   _: # enabled fsms
     Passive:
       id: 1
-    FixStand:          # LowCoM pose → Footstep
+    FixStand:
       id: 2
-    FixStand_MYS:      # higher stand pose → MindYourStep
-      id: 6
-      type: FixStand
-    Velocity:
+    Stage1:
       id: 3
-      type: RLBase
-    Footstep:
+      type: Footstep
+    Stage2:
       id: 4
       type: Footstep
-    MindYourStep:
-      id: 5
-      type: MindYourStep
-
-    Mimic_Dance_102: 
-      id: 101
-      type: Mimic
-    Mimic_Gangnam_Style:
-      id: 102
-      type: Mimic
 
   Passive:
-    transitions: 
-      FixStand: LT + up.on_pressed | f.on_pressed        # LowCoM (-0.4)
-      FixStand_MYS: LT + left.on_pressed | h.on_pressed  # MindYourStep stand (-0.2)
+    transitions:
+      FixStand: LT + up.on_pressed | f.on_pressed
     mode: [
       1,1,1,1,1,1,
       1,1,1,1,1,1,
@@ -39,15 +29,14 @@ FSM:
       3,3,3,3,3,3,
       3,3,3,3,3,3,
       3,3,3,
-      3,3,3,3,3,3,3,  
-      3,3,3,3,3,3,3,  
+      3,3,3,3,3,3,3,
+      3,3,3,3,3,3,3,
     ]
-  # LowCoM stand for Footstep policies.
   FixStand:
     transitions:
       Passive: LT + B.on_pressed | p.on_pressed
-      Velocity: RB + X.on_pressed | v.on_pressed
-      Footstep: RB + Y.on_pressed | g.on_pressed
+      Stage1: RB + X.on_pressed | j.on_pressed
+      Stage2: RB + Y.on_pressed | k.on_pressed
     kp: [
       200., 100., 100., 350., 540., 40.,
       200., 100., 100., 350., 540., 40.,
@@ -72,72 +61,11 @@ FSM:
         0.1,-0.2,0,1.1,0,0,0
       ]
     ]
-  # Stand pose for MindYourStep (G1_29DOF_MYS_CFG).
-  FixStand_MYS:
+  Stage1:
     transitions:
       Passive: LT + B.on_pressed | p.on_pressed
-      Velocity: RB + X.on_pressed | v.on_pressed
-      MindYourStep: RB + A.on_pressed | m.on_pressed
-    kp: [
-      200., 100., 100., 350., 540., 40.,
-      200., 100., 100., 350., 540., 40.,
-      200,200,200,
-      40,40,40,40,40,40,40,
-      40,40,40,40,40,40,40,
-    ]
-    kd: [
-      2,2,2,4,2,2,
-      2,2,2,4,2,2,
-      5,5,5,
-      10,10,10,10,10,10,10,
-      10,10,10,10,10,10,10,
-    ]
-    ts: [0, 5]
-    qs: [
-      [],
-      [ -0.1, 0,0,0.3,-0.2,0,
-        -0.1, 0,0,0.3,-0.2,0,
-        0,0,0,
-        0, 0.2,0,1.5,0,0,0,
-        0,-0.2,0,1.5,0,0,0
-      ]
-    ]
-  Velocity:
+    policy_dir: config/policy/stage1
+  Stage2:
     transitions:
       Passive: LT + B.on_pressed | p.on_pressed
-      Mimic_Dance_102: LT(2s) + down.on_pressed | c.on_pressed
-      Mimic_Gangnam_Style: LT(2s) + right.on_pressed | k.on_pressed
-
-    policy_dir: config/policy/velocity
-    # policy_dir: ../../../logs/rsl_rl/unitree_g1_29dof_velocity
-  Footstep:
-    transitions:
-      Passive: LT + B.on_pressed | p.on_pressed
-    policy_dir: config/policy/footstep/obs_full
-    # policy_dir: config/policy/footstep/obs_heuri
-    # policy_dir: config/policy/footstep/obs_woik
-    # policy_dir: config/policy/footstep/obs_wofcmd
-    # policy_dir: config/policy/footstep/obs_wocomz_heuri
-  MindYourStep:
-    transitions:
-      Passive: LT + B.on_pressed | p.on_pressed
-    policy_dir: config/policy/mindyourstep
-  Mimic_Dance_102:
-    transitions: 
-      Passive: LT + B.on_pressed | p.on_pressed
-      Velocity: RB + X.on_pressed | v.on_pressed
-    fps: 60
-    motion_file: config/policy/mimic/dance_102/params/G1_Take_102.bvh_60hz.csv
-    policy_dir: config/policy/mimic/dance_102/
-    time_start: 2.8
-    time_end: 24.0
-  Mimic_Gangnam_Style:
-    transitions: 
-      Passive: LT + B.on_pressed | p.on_pressed
-      Velocity: RB + X.on_pressed | v.on_pressed
-    fps: 60
-    motion_file: config/policy/mimic/gangnam_style/params/G1_gangnam_style_V01.bvh_60hz.csv
-    policy_dir: config/policy/mimic/gangnam_style/
-    time_start: 5.2
-    time_end: 25.5
-
+    policy_dir: config/policy/stage2

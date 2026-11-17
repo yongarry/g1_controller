@@ -1,0 +1,26 @@
+# Stage 2: the same tracker on footsteps picked by the depth planner (exported/planner.onnx).
+# exported/ = sm_joy_v3_back model_5000 + plan_v11_back planner_500 (2026-11-17); the old pair (sm_joy_v2 + plan_v9
+# planner_400, needs blur_zero_pad: true) is in exported/old_v2_plan_v9/.
+extends: ../../deploy_common.yaml
+footstep:
+  mode: stage2
+  planner:
+    velocity:
+      vx: [-0.3, 0.5]              # sm_joy_v3_back is trained on -0.3 .. 0.5 m/s
+    planner_file: planner.onnx
+    depth:
+      topic: rt/depth            # unitree_mujoco depth_camera (simulate/config.yaml) or realsense_depth_pub
+      max_age: 0.2
+      width: 64
+      height: 36
+      fov: [87.0, 58.0]          # [deg]
+      max_depth: 3.0
+      blur: true
+      # true: the depth model of planners trained before 2026-11-16 (the exported plan_v9 planner_400).
+      # false for plan_v10 and later: mean over the valid pixels only.
+      blur_zero_pad: false
+      every: 5                   # one image per 5 policy ticks, 20 kept (2 s)
+      frames: 20
+      camera_parent: torso_link
+      camera_pos: [0.0576235, 0.01753, 0.41987]
+      camera_pitch: 0.8307767239493009

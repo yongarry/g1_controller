@@ -1,9 +1,10 @@
 // Copyright (c) 2025, DYROS.
 // All rights reserved.
 //
-// Single-env port of tocabi_3d_footstep/mdp/commands.py :: OnlineFootCommand (G1-2d footstep policy).
-// The "global" frame is re-anchored at the pelvis every tick; valid because everything carried
-// across ticks lives in a relative (stance-foot or command) frame.
+// Single-env port of yonglab rise/mdp/commands.py :: OnlineFootCommand (the RISE reference: VRP, preview control,
+// IK) with the footsteps of JoystickFootCommand: nominal footsteps from the joystick velocity (stage 1) or picked by
+// the stage-2 planner from depth (footstep_planner.h). The "global" frame is re-anchored at the pelvis every tick;
+// valid because everything carried across ticks lives in a relative (stance-foot or command) frame.
 
 #pragma once
 
@@ -20,8 +21,7 @@
 #include "isaaclab/utils/kinematics.h"
 #include "isaaclab/envs/mdp/commands/vrp_generator.h"
 #include "isaaclab/envs/mdp/commands/preview_controller.h"
-#include "isaaclab/envs/mdp/commands/foot_command_source.h"
-#include "isaaclab/envs/mdp/commands/vision_foot_target_source.h"
+#include "isaaclab/envs/mdp/commands/footstep_planner.h"
 
 namespace isaaclab
 {
@@ -39,7 +39,6 @@ enum class FootStateSource
 {
     FK_ODOMETRY, // default: accumulate FK landing measurements (stance_world_)
     SIM_ODOM,    // MuJoCo sim: rt/odommodestate base position + FK foot offset
-    MUJOCO,      // MuJoCo sim: ankle-roll body xpos/yaw from odom.foot_position_body
 };
 
 struct FrameState
@@ -77,14 +76,11 @@ public:
         int ik_iters = 50;
         float ik_lambda = 0.05f;
         float ik_pos_tol = 1e-4f;
-        // command ranges (clamp joystick and vision input; csv / csv_global plans pass through)
-        float foot_pos_x_min = -0.2f, foot_pos_x_max = 0.2f;
+        // footstep ranges (JoystickFootCommandCfg.sample_ranges): the planner's candidate area and the clamps
+        float foot_pos_x_min = -0.3f, foot_pos_x_max = 0.4f;
         float foot_pos_y_min = 0.2f, foot_pos_y_max = 0.4f;
-        float foot_pos_z_min = -0.15f, foot_pos_z_max = 0.15f;
-        float foot_rot_y_min = -0.2f, foot_rot_y_max = 0.2f;
-        float foot_ssp_min = 0.5f, foot_ssp_max = 1.0f;
-        float foot_dsp_min = 0.0f, foot_dsp_max = 0.3f;
-        float foot_height_min = 0.05f, foot_height_max = 0.10f;
+        float foot_pos_z_min = -0.2f, foot_pos_z_max = 0.2f;
+        float foot_rot_y_min = -0.8f, foot_rot_y_max = 0.8f;
         int start_phase_indicator = 0; // 0: right swing first, 1: left swing first
     };
 
@@ -102,104 +98,82 @@ public:
         command_vec_.fill(0.0f);
     }
 
-    // The operator updates this each tick; sampled at step boundaries.
-    void set_input(const FootCommandInput& in) { input_ = in; }
-    // csv: the whole local plan, so each lookahead slot is built from its own row.
-    void set_local_plan(std::vector<FootCommandInput> rows) { local_plan_ = std::move(rows); }
-
-    // Global mode: step 0 is recomputed each step from the measured (drift-corrected) stance pose.
-    // `init_stance` MUST match the frame the plan CSV was generated in (cmd/convert_footcommand_2_global.py).
-    void set_global_plan(std::vector<GlobalFootTarget> plan, WorldPose init_stance = WorldPose{})
+    // Markers for the simulator: soles in the yaw frame of `frame` (origin at that body), [x, y, z, yaw] with z = sole
+    // bottom; plan_seq() changes whenever they are replanned.
+    struct MarkerConfig
     {
-        global_plan_ = std::move(plan);
-        global_init_stance_ = init_stance;
-        global_mode_ = !global_plan_.empty();
-        if (global_mode_) cfg_.start_phase_indicator = global_plan_.front().phase;
-    }
-    bool global_mode() const { return global_mode_; }
-    // The caller stops the gait here instead of letting the robot march in place forever.
-    bool global_plan_done() const
-    {
-        return global_mode_ && planner_index_ >= (int)global_plan_.size();
-    }
-
-    // Vision mode: targets are kept in the world frame in an id-keyed memory, so a target
-    // stays plannable while it is outside the camera view.
-    struct VisionConfig
-    {
-        float memory_s = 10.0f;       // [s] world-frame target memory
-        float max_range = 1.5f;       // [m] ignore targets farther than this
-        float min_forward = -0.10f;   // [m] stance-frame x cutoff
-        float exclude_radius = 0.12f; // [m] targets under either foot are skipped
-        float side_margin = 0.04f;    // [m] swing-side feasibility margin
-        // Board origin (stone top-surface centre) relative to the ankle_roll_link
-        // landing pose, in the target yaw frame: +x forward, z up [m].
-        math::Vec3 target_offset = math::Vec3(0.035f, 0.0f, -0.03458f);
+        std::string frame = "torso_link";
+        float sole_x = 0.20f, sole_y = 0.08f; // drawn sole size [m]
+        float sole_offset_x = 0.035f;          // sole centre ahead of the ankle [m]
+        float ankle_height = 0.035f;           // ankle above the sole [m]
     };
+    // The joystick's nominal footstep.
+    const std::vector<std::array<float, 4>>& nominal_soles() const { return nominal_soles_; }
+    int plan_seq() const { return plan_seq_; }
+    // Stage 2: sole of the footstep the planner picked; empty in stage 1.
+    const std::vector<std::array<float, 4>>& picked_soles() const { return picked_soles_; }
+    // Stage 2: the score map of the last pick, one tile per candidate cell (all of them):
+    // [x, y, z, bin] = sole centre at the predicted landing height (same frame as the soles) and the score bin:
+    // SCORE_BINS - 1 = best ... 0 = SCORE_SHOWN or more below the best. A tile is never drawn below the lowest
+    // of the cells within SCORE_SHOWN of the best: the height of a bad cell (a gap) is not learned, and the tile
+    // would sink out of sight. score_tiles_yaw(): yaw of the cell grid in that frame.
+    static constexpr float SCORE_SHOWN = 2.5f;
+    static constexpr int SCORE_BINS = 5;
+    const std::vector<std::array<float, 4>>& score_tiles() const { return score_tiles_; }
+    float score_tiles_yaw() const { return score_tiles_yaw_; }
+    float cell_size() const { return pcfg_.res; }
+    const MarkerConfig& marker_config() const { return mcfg_; }
 
-    void enable_vision_mode(const VisionConfig& vc)
+    // The joystick velocity gives the nominal footstep and its timing (JoystickFootCommand). Stage 2 (`onnx_path` not
+    // empty): the first footstep and both height steps are picked from the depth patch at every support transition
+    // (DeployedPlanner). Stage 1 (`onnx_path` empty): the nominal footsteps are walked with z = 0 (flat ground only).
+    void enable_planner_mode(const FootstepPlannerConfig& pc, const std::string& onnx_path)
     {
-        vision_mode_ = true;
-        vcfg_ = vc;
+        planner_mode_ = true;
+        pcfg_ = pc;
+        cam_fid_ = kin_->frame_index(pc.camera_parent);
+        patch_ = std::make_unique<PlannerPatch>(pc, cfg_.foot_pos_x_min, cfg_.foot_pos_x_max,
+                                                cfg_.foot_pos_y_min, cfg_.foot_pos_y_max);
+        // markers for the simulator: soles in the yaw frame of the camera's parent body
+        mcfg_.frame = pc.camera_parent;
+        mcfg_.sole_offset_x = pc.sole_offset_x;
+        mcfg_.ankle_height = -pc.sole_z;
+        if (onnx_path.empty()) return;
+        net_ = std::make_unique<PlannerNet>(onnx_path);
+        if (net_->H() != patch_->H() || net_->W() != patch_->W() || net_->proprio_dim() != 37)
+            throw std::runtime_error("FootstepCommand: planner.onnx expects patch " + std::to_string(net_->H()) + "x" +
+                                     std::to_string(net_->W()) + " / proprio " + std::to_string(net_->proprio_dim()) +
+                                     ", the controller builds " + std::to_string(patch_->H()) + "x" +
+                                     std::to_string(patch_->W()) + " / 37 (check footstep.ranges).");
     }
-    bool vision_mode() const { return vision_mode_; }
-
-    // Monotonic clock for the target memory (call every control tick).
-    void set_vision_clock(double now_s) { vision_now_ = now_s; }
-
-    // PELVIS-frame targets; ingested in compute(), where this tick's stance-foot state is known.
-    void set_vision_targets(const std::vector<VisionTarget>& ts)
+    bool planner_mode() const { return planner_mode_; }
+    // Joystick velocity command [m/s, m/s, rad/s]; read at support transitions.
+    void set_joystick_velocity(float vx, float vy, float wz) { joy_v_ = {vx, vy, wz}; }
+    // [base ang vel (3), projected gravity (3), leg q - default (12), leg qd (12), waist q - default (3)], each tick.
+    void set_planner_proprio(const std::array<float, 33>& p) { planner_proprio_ = p; }
+    // Call after compute() / hold_standby() of every tick with the newest depth image (nullptr: none); every
+    // `every`-th call keeps it, placed with the camera pose of this tick.
+    void planner_observe(const float* depth)
     {
-        pending_vision_ = ts;
-        vision_pending_ = true;
+        if (!planner_mode_) return;
+        const bool due = (planner_tick_++ % pcfg_.every) == 0;
+        if (!due || !depth) return;
+        Eigen::Vector3f p;
+        Eigen::Matrix3f R;
+        camera_world_(p, R);
+        patch_->add_frame(depth, p, R);
     }
+    // Candidate cell of the last pick (cells = in-place step, -1 = nominal footstep without a network); changes of
+    // planner_pick_seq() mark a new pick.
+    int planner_pick() const { return planner_pick_; }
+    // Inputs and scores of the last pick (patch / seen: H x W row-major; score: cells + 1), and the stance pose used.
+    const std::vector<float>& planner_patch() const { return patch_buf_; }
+    const std::vector<float>& planner_seen() const { return seen_buf_; }
+    const std::vector<float>& planner_proprio() const { return proprio_buf_; }
+    const std::vector<float>& planner_score() const { return score_buf_; }
+    const WorldPose& stance_world() const { return stance_world_; }
+    int planner_pick_seq() const { return planner_pick_seq_; }
 
-    // Board target ids planned into buffer slots 0/1 (-1: station-keep step).
-    const std::array<int, 2>& planned_vision_ids() const { return planned_ids_; }
-
-    // Goal mode: world frame = robot start pose (x, y, yaw = 0, 0, 0), flat ground.
-    // Port of mind-your-step GoalReachingGaitGenerator.
-    struct GoalConfig
-    {
-        float step_x_max = 0.2f;    // [m] nominal (== max) forward step
-        float step_y = 0.237f;      // [m] nominal lateral step width
-        float step_yaw_max = 0.2f;  // [rad] nominal (== max) per-step turn
-        float ssp_t = 0.7f;         // [s] single support time
-        float dsp_t = 0.15f;        // [s] double support time
-        float height = 0.08f;       // [m] swing apex height
-        float reach_radius = 0.2f;  // [m] a goal this close counts as reached
-        float reach_yaw = 0.1f;     // [rad] heading tolerance (goals with a yaw)
-        float align_radius = 1.0f;  // [m] start blending into the goal heading here
-        // [m] max com_z change per footstep, so the preview controller is not asked for the
-        // whole change inside one dsp_t. <= 0 applies the goal's com_z immediately.
-        float com_z_rate = 0.02f;
-    };
-    // has_yaw == false: pass-through waypoint, heading free. `com_z` [m] is held while walking
-    // TO this goal and shifts the VRP height (vrp_height + com_z); negative crouches.
-    struct Goal
-    {
-        float x = 0.0f;
-        float y = 0.0f;
-        float yaw = 0.0f;
-        bool has_yaw = false;
-        float com_z = 0.0f;
-    };
-
-    // The goal frame is anchored on the robot when walking starts (no spawn pose), so it works on hardware.
-    void enable_goal_mode(const GoalConfig& gc, std::vector<Goal> goals)
-    {
-        gcfg_ = gc;
-        goals_ = std::move(goals);
-        goal_mode_ = !goals_.empty();
-    }
-    bool goal_mode() const { return goal_mode_; }
-    // Index of the goal being walked to (== goals().size() once all reached).
-    int goal_index() const { return goal_index_; }
-    const std::vector<Goal>& goals() const { return goals_; }
-    // Caller stops the gait here and clears it with reset(keep_goal_progress = true).
-    bool goal_arrived() const { return goal_arrived_; }
-    // Rate-limited com_z actually commanded (not the goal's nominal); stand still at this height.
-    float com_z() const { return com_z_current_; }
 
     void set_foot_state_source(FootStateSource src) { foot_state_source_ = src; }
     FootStateSource foot_state_source() const { return foot_state_source_; }
@@ -208,30 +182,22 @@ public:
     void set_base_pos_world(const math::Vec3& p) { base_pos_world_ = p; }
     const math::Vec3& base_pos_world() const { return base_pos_world_; }
 
-    // Sim only (foot_state_source=mujoco): ankle-roll body world pose each tick.
-    void set_mujoco_foot_pose(Kinematics::Side s, const WorldPose& p)
+    // Walk start: two in-place footsteps, anchored on the state the robot is in now.
+    void reset()
     {
-        foot_mujoco_[s == Kinematics::LEFT ? 0 : 1] = p;
-    }
-
-    // `keep_goal_progress`: re-anchor on the current state without rewinding to the first goal.
-    void reset(bool keep_goal_progress = false)
-    {
-        if (!keep_goal_progress) step_counter_ = 0;
+        step_counter_ = 0;
         // Next hold_standby must re-solve IK from the pose we are standing in.
         standby_ik_latched_ = false;
         // A fresh resample owns the world anchor; don't track the IMU until it has set one.
-        if (!keep_goal_progress) world_yaw_latched_ = false;
-        resample_command_(keep_goal_progress);
-        // Not re-latched on resume: a turn made while stopped must reach the planner,
-        // not be absorbed into the offset.
-        if (foot_state_source_ == FootStateSource::FK_ODOMETRY && !keep_goal_progress)
+        world_yaw_latched_ = false;
+        resample_command_planner_();
+        if (foot_state_source_ == FootStateSource::FK_ODOMETRY)
         {
             world_yaw_offset_ = math::wrap_to_pi(stance_world_.yaw - foot_yaw_imu_(stance_side_()));
             world_yaw_latched_ = true;
         }
         update_link_states_();
-        if (uses_absolute_foot_() && !global_mode_)
+        if (uses_absolute_foot_())
             init_stance_world_from_abs_();
         generate_vrp_ref_trajectory_();
         preview_.reset_error_integral();
@@ -253,11 +219,6 @@ public:
     {
         const float dt = cfg_.step_dt;
         update_link_states_();
-        if (vision_mode_ && vision_pending_)
-        {
-            ingest_vision_targets_();
-            vision_pending_ = false;
-        }
         generate_ref_trajectory_();
         time_left_ -= dt;
         walking_tick_ += 1;
@@ -280,7 +241,7 @@ public:
             last_step_swing_right_ = (phase_indicator_[0] == 0);
             ++step_counter_;
 
-            update_command_();
+            update_command_planner_();
             update_link_states_();
             generate_vrp_ref_trajectory_();
             generate_ref_trajectory_();
@@ -326,7 +287,7 @@ public:
     // 24-dim command: [ik_target(12), phase_cos, phase_sin, foot_command0(9), com_z(1)]
     const std::array<float, 24>& command() const { return command_vec_; }
 
-    // Used to advance an external FootCommandSource (e.g. CSV).
+    // True in the tick a footstep ends.
     bool step_completed() const { return step_completed_; }
 
     // Commanded minus measured swing-foot landing, stance frame. Valid only when step_completed().
@@ -358,6 +319,9 @@ public:
     // Heuristic reference instead of preview output when com_generate_type != PREV.
     math::Vec3 target_com_stance() const { return target_com_stance_; }
     math::Vec3 com_stance() const { return com_pos_stance_; }
+    // Swing foot in the stance frame: measured, and the reference of this tick.
+    math::Vec3 swing_stance() const { return swing_foot_stance_pos_; }
+    math::Vec3 target_swing_stance() const { return target_swing_stance_pos_; }
     math::Vec3 com_global() const { return com_pos_global_; }
     math::Vec3 target_com_global() const { return target_com_global_pos_; }
 
@@ -458,8 +422,7 @@ private:
 
     bool uses_absolute_foot_() const
     {
-        return foot_state_source_ == FootStateSource::SIM_ODOM
-            || foot_state_source_ == FootStateSource::MUJOCO;
+        return foot_state_source_ == FootStateSource::SIM_ODOM;
     }
 
     math::Vec3 foot_world_pos_sim_(Kinematics::Side s) const
@@ -474,21 +437,8 @@ private:
         return WorldPose{pos[0], pos[1], pos[2], yaw};
     }
 
-    math::Vec3 foot_world_pos_abs_(Kinematics::Side s) const
-    {
-        if (foot_state_source_ == FootStateSource::MUJOCO)
-        {
-            const auto& w = foot_mujoco_[s == Kinematics::LEFT ? 0 : 1];
-            return math::Vec3(w.x, w.y, w.z);
-        }
-        return foot_world_pos_sim_(s);
-    }
-    WorldPose world_pose_from_foot_abs_(Kinematics::Side s) const
-    {
-        if (foot_state_source_ == FootStateSource::MUJOCO)
-            return foot_mujoco_[s == Kinematics::LEFT ? 0 : 1];
-        return world_pose_from_foot_sim_(s);
-    }
+    math::Vec3 foot_world_pos_abs_(Kinematics::Side s) const { return foot_world_pos_sim_(s); }
+    WorldPose world_pose_from_foot_abs_(Kinematics::Side s) const { return world_pose_from_foot_sim_(s); }
 
     void init_stance_world_from_abs_()
     {
@@ -515,556 +465,155 @@ private:
         stance_world_ = next;
     }
 
-    // Joystick / csv step; also the vision-mode station-keeping fallback.
-    std::array<float, 9> build_foot_command_(int step)
-    {
-        const FootCommandInput& in = slot_input_(step);
-        std::array<float, 9> fc{};
-        fc[0] = in.step_x;
-        // Nominal width is symmetric; lateral_bias shifts net CoM sideways by
-        // widening the left-swing step and narrowing the right-swing step.
-        const float y_mag = (phase_indicator_[step] == 1)
-            ? (in.step_y + in.lateral_bias)
-            : (in.step_y - in.lateral_bias);
-        fc[1] = (phase_indicator_[step] == 0) ? -y_mag : y_mag;
-        fc[2] = in.step_z;
-        fc[3] = 0.0f;
-        fc[4] = 0.0f;
-        fc[5] = in.step_yaw;
-        fc[6] = in.ssp_t;
-        fc[7] = in.dsp_t;
-        fc[8] = in.height;
-        if (local_plan_.empty()) clamp_step_(fc);
-        return fc;
-    }
-
-    // csv: slot s holds plan row step_counter_ + s (the last row once past the end).
-    const FootCommandInput& slot_input_(int s) const
-    {
-        if (local_plan_.empty()) return input_;
-        return local_plan_[std::min<long>(step_counter_ + s, (long)local_plan_.size() - 1)];
-    }
-
-    // Clamp a step to the trained command ranges (|y| keeps its side).
-    void clamp_step_(std::array<float, 9>& fc) const
-    {
-        fc[0] = clampf(fc[0], cfg_.foot_pos_x_min, cfg_.foot_pos_x_max);
-        const float y_mag = clampf(std::abs(fc[1]), cfg_.foot_pos_y_min, cfg_.foot_pos_y_max);
-        fc[1] = (fc[1] < 0.0f) ? -y_mag : y_mag;
-        fc[2] = clampf(fc[2], cfg_.foot_pos_z_min, cfg_.foot_pos_z_max);
-        fc[5] = clampf(fc[5], cfg_.foot_rot_y_min, cfg_.foot_rot_y_max);
-        fc[6] = clampf(fc[6], cfg_.foot_ssp_min, cfg_.foot_ssp_max);
-        fc[7] = clampf(fc[7], cfg_.foot_dsp_min, cfg_.foot_dsp_max);
-        fc[8] = clampf(fc[8], cfg_.foot_height_min, cfg_.foot_height_max);
-    }
-
-    void resample_command_(bool keep_goal_progress)
-    {
-        if (global_mode_) { resample_command_global_(); return; }
-        if (vision_mode_) { resample_command_vision_(); return; }
-        if (goal_mode_) { resample_command_goal_(keep_goal_progress); return; }
-        const int LA = cfg_.future_foot_step_num;
-        walking_tick_ = 0;
-        stance_world_ = WorldPose{}; // world frame anchored at the initial stance foot
-        phase_indicator_[0] = cfg_.start_phase_indicator;
-        for (int i = 0; i < LA - 1; ++i) phase_indicator_[i + 1] = 1 - phase_indicator_[i];
-        for (int s = 0; s < LA; ++s) foot_command_[s] = build_foot_command_(s);
-        for (int i = 0; i < LA; ++i) com_z_command_[i] = slot_input_(i).com_z;
-        com_z_command_[LA] = slot_input_(LA - 1).com_z;
-        time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
-    }
-
-    void update_command_()
-    {
-        if (global_mode_) { update_command_global_(); return; }
-        if (vision_mode_) { update_command_vision_(); return; }
-        if (goal_mode_) { update_command_goal_(); return; }
-        accumulate_stance_world_(); // keep the world-frame foot poses tracking
-        const int LA = cfg_.future_foot_step_num;
-        walking_tick_ = 0;
-        for (int s = 0; s < LA - 1; ++s) foot_command_[s] = foot_command_[s + 1];
-        for (int i = 0; i < LA - 1; ++i) com_z_command_[i] = com_z_command_[i + 1];
-        for (int i = 0; i < LA - 1; ++i) phase_indicator_[i] = phase_indicator_[i + 1];
-        phase_indicator_[LA - 1] = 1 - phase_indicator_[LA - 2];
-        time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
-        foot_command_[LA - 1] = build_foot_command_(LA - 1);
-        // same slot -> row mapping as fill_global_buffer_
-        com_z_command_[LA - 1] = com_z_command_[LA] = slot_input_(LA - 1).com_z;
-    }
-
-    // Phase from index parity, so feet keep alternating past the plan end.
-    int phase_for_(int idx) const
-    {
-        const int start_phase = global_plan_.front().phase;
-        return (idx & 1) ? (1 - start_phase) : start_phase;
-    }
-
-    std::array<float, 9> build_global_step_(const WorldPose& from, const GlobalFootTarget& tgt) const
-    {
-        std::array<float, 9> fc{};
-        const float c = std::cos(-from.yaw);
-        const float s = std::sin(-from.yaw);
-        const float dx = tgt.x - from.x;
-        const float dy = tgt.y - from.y;
-        fc[0] = c * dx - s * dy;
-        fc[1] = s * dx + c * dy;
-        fc[2] = tgt.z - from.z;
-        fc[3] = 0.0f;
-        fc[4] = 0.0f;
-        fc[5] = math::wrap_to_pi(tgt.yaw - from.yaw);
-        fc[6] = tgt.ssp_t;
-        fc[7] = tgt.dsp_t;
-        fc[8] = tgt.height;
-        return fc;
-    }
-
-    WorldPose plan_pose_(int idx) const
-    {
-        const GlobalFootTarget& t = global_plan_[std::min(idx, (int)global_plan_.size() - 1)];
-        return WorldPose{t.x, t.y, t.z, t.yaw};
-    }
-
-    // Pose to HOLD past the plan end. Fixed world poses keep in-place steps drift-corrected;
-    // relative in-place steps would accumulate landing error into stance_world_.
-    WorldPose held_pose_(int idx) const
-    {
-        const int N = (int)global_plan_.size();
-        const bool same_foot_as_last = (((idx - (N - 1)) % 2) == 0);
-        if (!same_foot_as_last && N < 2) return global_init_stance_;
-        const GlobalFootTarget& t = global_plan_[same_foot_as_last ? N - 1 : N - 2];
-        return WorldPose{t.x, t.y, t.z, t.yaw};
-    }
-
-    void fill_global_buffer_()
-    {
-        const int LA = cfg_.future_foot_step_num;
-        const int N = (int)global_plan_.size();
-        for (int s = 0; s < LA; ++s)
-        {
-            const int idx = planner_index_ + s;
-            phase_indicator_[s] = phase_for_(idx);
-
-            WorldPose from;
-            if (s == 0) from = stance_world_;
-            else if (idx - 1 < N) from = plan_pose_(idx - 1);
-            else from = held_pose_(idx - 1);
-
-            if (idx < N)
-            {
-                foot_command_[s] = build_global_step_(from, global_plan_[idx]);
-                com_z_command_[s] = global_plan_[idx].com_z;
-            }
-            else
-            {
-                // Past the plan end: station-keep on the final plan poses.
-                GlobalFootTarget tgt = global_plan_.back();
-                const WorldPose hp = held_pose_(idx);
-                tgt.x = hp.x; tgt.y = hp.y; tgt.z = hp.z; tgt.yaw = hp.yaw;
-                foot_command_[s] = build_global_step_(from, tgt);
-                com_z_command_[s] = global_plan_.back().com_z;
-            }
-        }
-        com_z_command_[LA] = (planner_index_ + LA - 1 < N)
-                                 ? global_plan_[planner_index_ + LA - 1].com_z
-                                 : global_plan_.back().com_z;
-        time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
-    }
-
-    void resample_command_global_()
-    {
-        walking_tick_ = 0;
-        planner_index_ = 0;
-        stance_world_ = global_init_stance_; // anchor of the global plan frame
-        fill_global_buffer_();
-    }
-
-    void update_command_global_()
-    {
-        walking_tick_ = 0;
-        accumulate_stance_world_();
-        ++planner_index_; // past plan end, fill_global_buffer_ emits station-keeping steps
-        fill_global_buffer_();
-    }
-
-    // Call after update_link_states_() (uses this tick's stance-foot state).
-    void ingest_vision_targets_()
-    {
-        const math::Quat stance_yaw = math::yaw_quat(stance_foot_global_.quat);
-        const float cw = std::cos(stance_world_.yaw);
-        const float sw = std::sin(stance_world_.yaw);
-        for (const auto& t : pending_vision_)
-        {
-            // pelvis frame -> gravity-aligned pelvis-anchored global frame
-            const math::Vec3 pg = math::quat_apply(robot_quat_w_, t.pos);
-            const math::Quat qg = math::quat_mul(robot_quat_w_, t.quat);
-            math::Vec3 p_st;
-            math::Quat q_st;
-            math::subtract_frame_transforms(stance_foot_global_.pos, stance_yaw,
-                                            pg, qg, p_st, q_st);
-            const float yaw_st = math::wrap_to_pi(math::euler_xyz_from_quat(q_st)[2]);
-            // board origin -> ankle_roll_link landing pose (the frame the planner commands)
-            const math::Vec3& off = vcfg_.target_offset;
-            p_st[0] -= std::cos(yaw_st) * off[0] - std::sin(yaw_st) * off[1];
-            p_st[1] -= std::sin(yaw_st) * off[0] + std::cos(yaw_st) * off[1];
-            p_st[2] -= off[2];
-            WorldPose w;
-            w.x = stance_world_.x + cw * p_st[0] - sw * p_st[1];
-            w.y = stance_world_.y + sw * p_st[0] + cw * p_st[1];
-            w.z = stance_world_.z + p_st[2];
-            w.yaw = math::wrap_to_pi(stance_world_.yaw + yaw_st);
-            vision_memory_[t.id] = VisionMemEntry{w, vision_now_};
-        }
-    }
-
-    // Slot 0 = nearest feasible target on the swing side, slot 1 = opposite foot relative to slot 0.
-    // A slot without a feasible target keeps a station-keeping step.
-    void fill_vision_buffer_()
-    {
-        const int LA = cfg_.future_foot_step_num;
-        planned_ids_ = {-1, -1};
-
-        // default: step in place
-        for (int s = 0; s < LA; ++s) foot_command_[s] = build_foot_command_(s);
-        for (int i = 0; i <= LA; ++i) com_z_command_[i] = input_.com_z;
-
-        for (auto it = vision_memory_.begin(); it != vision_memory_.end();)
-        {
-            if (vision_now_ - it->second.stamp > vcfg_.memory_s)
-                it = vision_memory_.erase(it);
-            else
-                ++it;
-        }
-
-        // candidates in the current stance-foot frame
-        struct Cand { int id; float x, y, z, yaw, d; };
-        std::vector<Cand> cands;
-        const float cw = std::cos(stance_world_.yaw);
-        const float sw = std::sin(stance_world_.yaw);
-        for (const auto& [id, e] : vision_memory_)
-        {
-            const float dx = e.pose.x - stance_world_.x;
-            const float dy = e.pose.y - stance_world_.y;
-            Cand cd;
-            cd.id = id;
-            cd.x = cw * dx + sw * dy;
-            cd.y = -sw * dx + cw * dy;
-            cd.z = e.pose.z - stance_world_.z;
-            cd.yaw = math::wrap_to_pi(e.pose.yaw - stance_world_.yaw);
-            cd.d = std::hypot(cd.x, cd.y);
-            if (cd.d > vcfg_.max_range) continue;
-            if (cd.x < vcfg_.min_forward) continue;
-            if (cd.d < vcfg_.exclude_radius) continue; // under the stance foot
-            if (std::hypot(cd.x - swing_foot_stance_pos_[0],
-                           cd.y - swing_foot_stance_pos_[1]) < vcfg_.exclude_radius)
-                continue; // under the swing foot
-            cands.push_back(cd);
-        }
-        if (cands.empty())
-        {
-            time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
-            return;
-        }
-
-        // phase 0: right swings, so the target must be on the -y side; phase 1 mirrored
-        const bool right_swings = (phase_indicator_[0] == 0);
-        const Cand* t0 = nullptr;
-        for (const auto& cd : cands)
-        {
-            if (right_swings ? (cd.y > -vcfg_.side_margin)
-                             : (cd.y < vcfg_.side_margin)) continue;
-            if (!t0 || cd.d < t0->d) t0 = &cd;
-        }
-        if (!t0)
-        {
-            time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
-            return;
-        }
-
-        auto timing = [&](std::array<float, 9>& fc) {
-            fc[6] = input_.ssp_t;
-            fc[7] = input_.dsp_t;
-            fc[8] = input_.height;
-            clamp_step_(fc);
-        };
-
-        planned_ids_[0] = t0->id;
-        std::array<float, 9> fc0{};
-        fc0[0] = t0->x; fc0[1] = t0->y; fc0[2] = t0->z;
-        fc0[5] = t0->yaw;
-        timing(fc0);
-        foot_command_[0] = fc0;
-
-        // slot 1: opposite foot, relative to the slot-0 landing frame
-        if (LA > 1)
-        {
-            const float c0 = std::cos(t0->yaw);
-            const float s0 = std::sin(t0->yaw);
-            const Cand* t1 = nullptr;
-            std::array<float, 9> fc1{};
-            float best = std::numeric_limits<float>::max();
-            for (const auto& cd : cands)
-            {
-                if (cd.id == t0->id) continue;
-                const float rx = c0 * (cd.x - t0->x) + s0 * (cd.y - t0->y);
-                const float ry = -s0 * (cd.x - t0->x) + c0 * (cd.y - t0->y);
-                // the foot after the swing lands on the opposite side
-                if (right_swings ? (ry < vcfg_.side_margin)
-                                 : (ry > -vcfg_.side_margin)) continue;
-                if (rx < vcfg_.min_forward) continue;
-                const float dd = std::hypot(rx, ry);
-                if (dd < vcfg_.exclude_radius || dd >= best) continue;
-                best = dd;
-                t1 = &cd;
-                fc1.fill(0.0f);
-                fc1[0] = rx; fc1[1] = ry; fc1[2] = cd.z - t0->z;
-                fc1[5] = math::wrap_to_pi(cd.yaw - t0->yaw);
-                timing(fc1);
-            }
-            if (t1)
-            {
-                planned_ids_[1] = t1->id;
-                foot_command_[1] = fc1;
-            }
-            // else: keep the station-keeping step beside the slot-0 landing
-        }
-
-        time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
-    }
-
-    void resample_command_vision_()
+    // ---- footsteps (JoystickFootCommand) ----
+    // After a reset: two in-place footsteps, as the training env (FootCommandCfg.ranges); nothing seen yet.
+    void resample_command_planner_()
     {
         const int LA = cfg_.future_foot_step_num;
         walking_tick_ = 0;
         stance_world_ = WorldPose{};
-        vision_memory_.clear();
         phase_indicator_[0] = cfg_.start_phase_indicator;
         for (int i = 0; i < LA - 1; ++i) phase_indicator_[i + 1] = 1 - phase_indicator_[i];
-
-        // Prime the FIRST step from a target already visible at entry; ingestion otherwise
-        // only happens in compute(), so the target would apply from the SECOND step.
-        update_link_states_();
-        if (uses_absolute_foot_())
-            init_stance_world_from_abs_();
-        if (vision_pending_) { ingest_vision_targets_(); vision_pending_ = false; }
-        fill_vision_buffer_();
-        spdlog::info("[FootVision] first step primed: slot0={} slot1={} "
-                     "(memory={}, cmd0: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f}"
-                     ", cmd1: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f})",
-                     planned_ids_[0], planned_ids_[1], vision_memory_.size(),
-                     foot_command_[0][0], foot_command_[0][1],
-                     foot_command_[0][2], foot_command_[0][5],
-                     foot_command_[1][0], foot_command_[1][1],
-                     foot_command_[1][2], foot_command_[1][5]);
-    }
-
-    void update_command_vision_()
-    {
-        const int LA = cfg_.future_foot_step_num;
-        walking_tick_ = 0;
-        accumulate_stance_world_();
-        for (int i = 0; i < LA - 1; ++i) phase_indicator_[i] = phase_indicator_[i + 1];
-        phase_indicator_[LA - 1] = 1 - phase_indicator_[LA - 2];
-        fill_vision_buffer_();
-        spdlog::info("[FootVision] planned targets: slot0={} slot1={} "
-                     "(memory={}, cmd0: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f}"
-                     ", cmd1: x={:.3f} y={:.3f} z={:.3f} yaw={:.3f})",
-                     planned_ids_[0], planned_ids_[1], vision_memory_.size(),
-                     foot_command_[0][0], foot_command_[0][1],
-                     foot_command_[0][2], foot_command_[0][5],
-                     foot_command_[1][0], foot_command_[1][1],
-                     foot_command_[1][2], foot_command_[1][5]);
-    }
-
-    std::array<float, 9> station_keep_step_(int phase) const
-    {
-        std::array<float, 9> fc{};
-        fc[1] = (phase == 0) ? -gcfg_.step_y : gcfg_.step_y;
-        fc[6] = gcfg_.ssp_t;
-        fc[7] = gcfg_.dsp_t;
-        fc[8] = gcfg_.height;
-        return fc;
-    }
-
-    // Goal frame: feet midpoint = origin, mean foot heading = 0. Returns the STANCE foot pose in it;
-    // call after update_link_states_. (sim_odom/mujoco use the sim origin instead, where the robot spawns.)
-    WorldPose goal_anchor_stance_() const
-    {
-        // Robot heading is the mean of the feet, so the stance foot sits at -delta/2.
-        const float delta = math::wrap_to_pi(
-            math::euler_xyz_from_quat(swing_foot_stance_quat_)[2]);
-        const float th = -0.5f * delta;
-        const float c = std::cos(th);
-        const float s = std::sin(th);
-        // centre = stance + R(th) * (swing/2) = origin  =>  stance = -R(th) * (swing/2)
-        const float hx = 0.5f * swing_foot_stance_pos_[0];
-        const float hy = 0.5f * swing_foot_stance_pos_[1];
-        WorldPose w;
-        w.x = -(c * hx - s * hy);
-        w.y = -(s * hx + c * hy);
-        w.z = 0.0f; // flat ground: z origin is the sole plane, unused by the planner
-        w.yaw = th;
-        return w;
-    }
-
-    // Move `cur` toward `tgt` by at most `rate` (rate <= 0: jump straight there).
-    static float ramp_toward_(float cur, float tgt, float rate)
-    {
-        const float d = tgt - cur;
-        if (rate <= 0.0f || std::abs(d) <= rate) return tgt;
-        return cur + std::copysign(rate, d);
-    }
-
-    static float mean_yaw_(const WorldPose& a, const WorldPose& b)
-    {
-        return std::atan2(std::sin(a.yaw) + std::sin(b.yaw),
-                          std::cos(a.yaw) + std::cos(b.yaw));
-    }
-
-    // `cx, cy`: robot centre (feet midpoint); the turn is measured from there so the stance
-    // foot's lateral offset does not bias the heading.
-    std::array<float, 9> build_goal_step_(const WorldPose& stance, float cx, float cy,
-                                          const Goal& g, int phase) const
-    {
-        // goal and robot centre in the stance-foot yaw frame
-        const float c = std::cos(-stance.yaw);
-        const float s = std::sin(-stance.yaw);
-        const float gx = c * (g.x - stance.x) - s * (g.y - stance.y);
-        const float gy = s * (g.x - stance.x) + c * (g.y - stance.y);
-        const float rx = c * (cx - stance.x) - s * (cy - stance.y);
-        const float ry = s * (cx - stance.x) + c * (cy - stance.y);
-
-        std::array<float, 9> fc{};
-
-        // Steer at the goal while far, blending into the goal heading between align_radius and
-        // reach_radius (blended on the circle, so wrap-around is handled).
-        float turn = std::atan2(gy - ry, gx - rx);
-        if (g.has_yaw)
-        {
-            const float to_yaw = math::wrap_to_pi(g.yaw - stance.yaw);
-            const float span = std::max(gcfg_.align_radius - gcfg_.reach_radius, 1e-3f);
-            const float w = clampf((std::hypot(g.x - cx, g.y - cy) - gcfg_.reach_radius) / span,
-                                   0.0f, 1.0f);
-            turn = std::atan2(w * std::sin(turn) + (1.0f - w) * std::sin(to_yaw),
-                              w * std::cos(turn) + (1.0f - w) * std::cos(to_yaw));
-        }
-        fc[5] = clampf(math::wrap_to_pi(turn), -gcfg_.step_yaw_max, gcfg_.step_yaw_max);
-
-        // Aim so the robot CENTRE lands on the goal; stepping onto it leaves the body half a stance
-        // width off, which the centre-measured reach test would never accept.
-        const float sign = (phase == 0) ? -1.0f : 1.0f; // phase 0: right foot swings
-        const float half = 0.5f * gcfg_.step_y;
-        const float tx = gx - sign * half * std::sin(fc[5]);
-        const float ty = gy + sign * half * std::cos(fc[5]);
-
-        fc[0] = clampf(tx, -gcfg_.step_x_max, gcfg_.step_x_max);
-        // Widen (never narrow) toward a target farther out on the swing side.
-        float y_mag = gcfg_.step_y;
-        if (sign * ty > 0.0f)
-            y_mag = clampf(std::abs(ty), gcfg_.step_y, 1.5f * gcfg_.step_y);
-        fc[1] = sign * y_mag;
-        fc[2] = 0.0f; // flat ground
-        fc[6] = gcfg_.ssp_t;
-        fc[7] = gcfg_.dsp_t;
-        fc[8] = gcfg_.height;
-        return fc;
-    }
-
-    void advance_goal_(int& gi, float cx, float cy, float ryaw, bool commit) const
-    {
-        while (gi < (int)goals_.size())
-        {
-            const Goal& g = goals_[gi];
-            const float d = std::hypot(g.x - cx, g.y - cy);
-            if (d > gcfg_.reach_radius) break;
-            const float e = g.has_yaw ? std::abs(math::wrap_to_pi(g.yaw - ryaw)) : 0.0f;
-            if (e > gcfg_.reach_yaw) break;
-            if (commit)
-                spdlog::info("[FootGoal] goal {}/{} reached (x={:.3f} y={:.3f} yaw={:.3f}): "
-                             "dist={:.3f} m, yaw err={:.3f} rad",
-                             gi + 1, goals_.size(), g.x, g.y, g.yaw, d, e);
-            ++gi;
-        }
-    }
-
-    // Slot s is planned from slot s-1's predicted landing; the lookahead must not consume goals.
-    void fill_goal_buffer_()
-    {
-        const int LA = cfg_.future_foot_step_num;
-        WorldPose stance = stance_world_;      // foot the swing pivots around
-        WorldPose other = prev_stance_world_;  // the foot that swings
-
-        const int before = goal_index_;
-        advance_goal_(goal_index_, 0.5f * (stance.x + other.x),
-                      0.5f * (stance.y + other.y), mean_yaw_(stance, other), true);
-        if (goal_index_ > before) goal_arrived_ = true;
-        if (goal_index_ >= (int)goals_.size() && !goals_done_logged_)
-        {
-            goals_done_logged_ = true;
-            spdlog::info("[FootGoal] all {} goals reached.", goals_.size());
-        }
-
-        int gi = goal_index_;
-        float cz = com_z_current_; // ramps forward across the lookahead
         for (int s = 0; s < LA; ++s)
         {
-            const float cx = 0.5f * (stance.x + other.x);
-            const float cy = 0.5f * (stance.y + other.y);
-            advance_goal_(gi, cx, cy, mean_yaw_(stance, other), false);
-
-            foot_command_[s] = (gi < (int)goals_.size())
-                ? build_goal_step_(stance, cx, cy, goals_[gi], phase_indicator_[s])
-                : station_keep_step_(phase_indicator_[s]);
-            const float cz_target = (gi < (int)goals_.size()) ? goals_[gi].com_z : input_.com_z;
-            cz = ramp_toward_(cz, cz_target, gcfg_.com_z_rate);
-            com_z_command_[s] = cz;
-            if (s == 0) com_z_current_ = cz; // only slot 0 is committed
-
-            other = stance;
-            stance = apply_step_(stance, foot_command_[s]);
+            const float sign = (phase_indicator_[s] == 0) ? -1.0f : 1.0f;
+            foot_command_[s] = {0.f, sign * pcfg_.stance_width, 0.f, 0.f, 0.f, 0.f,
+                                pcfg_.reset_ssp, pcfg_.reset_dsp, pcfg_.foot_height};
         }
-        com_z_command_[LA] = com_z_command_[LA - 1];
+        for (int i = 0; i <= LA; ++i) com_z_command_[i] = 0.0f;
         time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
+        patch_->clear();
+        planner_tick_ = 0;
     }
 
-    void resample_command_goal_(bool keep_progress)
+    void update_command_planner_()
     {
         const int LA = cfg_.future_foot_step_num;
         walking_tick_ = 0;
-        goal_arrived_ = false;
-        if (!keep_progress)
-        {
-            goal_index_ = 0;
-            goals_done_logged_ = false;
-            com_z_current_ = 0.0f; // start from the natural standing height
-            phase_indicator_[0] = cfg_.start_phase_indicator;
-            for (int i = 0; i < LA - 1; ++i) phase_indicator_[i + 1] = 1 - phase_indicator_[i];
-        }
-
-        // reset() only measures link states after resample_command_(), but the first step needs them.
-        update_link_states_();
-        if (uses_absolute_foot_())
-            stance_world_ = world_pose_from_foot_abs_(stance_side_());
-        else if (!keep_progress)
-            stance_world_ = goal_anchor_stance_();
-        prev_stance_world_ = swing_world_pose_();
-        fill_goal_buffer_();
-        spdlog::info("[FootGoal] planning toward goal {}/{}: stance foot at "
-                     "x={:.3f} y={:.3f} yaw={:.3f}, cmd0: x={:.3f} y={:.3f} yaw={:.3f}, com_z={:.3f}",
-                     std::min(goal_index_ + 1, (int)goals_.size()), goals_.size(),
-                     stance_world_.x, stance_world_.y, stance_world_.yaw,
-                     foot_command_[0][0], foot_command_[0][1], foot_command_[0][5],
-                     com_z_command_[0]);
-    }
-
-    void update_command_goal_()
-    {
-        const int LA = cfg_.future_foot_step_num;
-        walking_tick_ = 0;
-        prev_stance_world_ = stance_world_; // the old stance foot now swings
         accumulate_stance_world_();
         for (int i = 0; i < LA - 1; ++i) phase_indicator_[i] = phase_indicator_[i + 1];
         phase_indicator_[LA - 1] = 1 - phase_indicator_[LA - 2];
-        fill_goal_buffer_();
+        update_link_states_(); // the foot that just landed is now the stance foot
+        fill_planner_buffer_();
+    }
+
+    // JoystickFootCommand.candidates + DeployedPlanner.pick for one env.
+    void fill_planner_buffer_()
+    {
+        const int LA = cfg_.future_foot_step_num;
+        float u = 0.0f;
+        for (int i = 0; i < 3; ++i) u = std::max(u, std::abs(joy_v_[i]) / pcfg_.joystick_max[i]);
+        const float T = pcfg_.step_time_slow - (pcfg_.step_time_slow - pcfg_.step_time_fast) * std::min(u, 1.0f);
+        for (int s = 0; s < LA; ++s)
+        {
+            const float sign = (phase_indicator_[s] == 0) ? -1.0f : 1.0f;
+            auto& fc = foot_command_[s];
+            fc = {};
+            fc[0] = clampf(joy_v_[0] * T, cfg_.foot_pos_x_min, cfg_.foot_pos_x_max);
+            fc[1] = sign * clampf(pcfg_.stance_width + sign * joy_v_[1] * T, cfg_.foot_pos_y_min, cfg_.foot_pos_y_max);
+            fc[5] = clampf(joy_v_[2] * T, cfg_.foot_rot_y_min, cfg_.foot_rot_y_max);
+            fc[6] = pcfg_.ssp_ratio * T;
+            fc[7] = 0.5f * (1.0f - pcfg_.ssp_ratio) * T;
+            fc[8] = pcfg_.foot_height;
+        }
+        for (int i = 0; i <= LA; ++i) com_z_command_[i] = 0.0f;
+        time_left_ = foot_command_[0][6] + foot_command_[0][7] * 2.0f;
+        planner_pick_ = -1;
+        ++planner_pick_seq_;
+        const float nom_x = foot_command_[0][0], nom_y = foot_command_[0][1];
+        picked_soles_.clear();
+        score_tiles_.clear();
+        nominal_soles_.assign(1, planner_sole_(nom_x, nom_y, 0.0f, foot_command_[0][5]));
+        ++plan_seq_;
+        if (!net_) return;
+
+        const float side = (phase_indicator_[0] == 0) ? -1.0f : 1.0f;
+        patch_->build(stance_world_.x, stance_world_.y, stance_world_.z, stance_world_.yaw, side, patch_buf_, seen_buf_);
+        // planner_proprio: the joystick in shares of joystick_max, mirrored like the patch for a right swing
+        proprio_buf_.assign(planner_proprio_.begin(), planner_proprio_.end());
+        proprio_buf_.push_back(side);
+        proprio_buf_.push_back(joy_v_[0] / pcfg_.joystick_max[0]);
+        proprio_buf_.push_back(side * joy_v_[1] / pcfg_.joystick_max[1]);
+        proprio_buf_.push_back(side * joy_v_[2] / pcfg_.joystick_max[2]);
+        net_->run(patch_buf_, proprio_buf_, seen_buf_, score_buf_, z_buf_);
+        const int best = (int)(std::max_element(score_buf_.begin(), score_buf_.end()) - score_buf_.begin());
+        planner_pick_ = best;
+        if (best < patch_->cells())
+        {
+            foot_command_[0][0] = patch_->cell_x(best);
+            foot_command_[0][1] = side * patch_->cell_y(best);
+        }
+        else // in-place step: nothing else scored better
+        {
+            for (int s = 0; s < LA; ++s)
+            {
+                foot_command_[s][0] = 0.0f;
+                foot_command_[s][5] = 0.0f;
+                foot_command_[s][1] = ((phase_indicator_[s] == 0) ? -1.0f : 1.0f) * cfg_.foot_pos_y_min;
+            }
+        }
+        for (int s = 0; s < std::min(LA, 2); ++s)
+            foot_command_[s][2] = clampf(z_buf_[2 * best + s], cfg_.foot_pos_z_min, cfg_.foot_pos_z_max);
+        // both at the predicted landing height: the nominal footstep has none of its own
+        nominal_soles_[0] = planner_sole_(nom_x, nom_y, foot_command_[0][2], foot_command_[0][5]);
+        picked_soles_.assign(1, planner_sole_(foot_command_[0][0], foot_command_[0][1], foot_command_[0][2], foot_command_[0][5]));
+        float z_floor = cfg_.foot_pos_z_max;
+        for (int i = 0; i < patch_->cells(); ++i)
+            if (score_buf_[i] - score_buf_[best] > -SCORE_SHOWN)
+                z_floor = std::min(z_floor, clampf(z_buf_[2 * i], cfg_.foot_pos_z_min, cfg_.foot_pos_z_max));
+        for (int i = 0; i < patch_->cells(); ++i)
+        {
+            const float rel = std::max(score_buf_[i] - score_buf_[best], -SCORE_SHOWN);
+            const float z = std::max(clampf(z_buf_[2 * i], cfg_.foot_pos_z_min, cfg_.foot_pos_z_max), z_floor);
+            auto tile = planner_sole_(patch_->cell_x(i), side * patch_->cell_y(i), z, 0.0f);
+            score_tiles_yaw_ = tile[3];
+            tile[3] = (float)std::min(SCORE_BINS - 1, (int)((rel + SCORE_SHOWN) / SCORE_SHOWN * SCORE_BINS));
+            score_tiles_.push_back(tile);
+        }
+        float seen = 0.0f;
+        for (float v : seen_buf_) seen += v;
+        const WorldPose land = apply_step_(stance_world_, foot_command_[0]); // ankle of the landing, odometry world frame
+        spdlog::info("[FootPlanner] {} x={:.3f} y={:.3f} z={:.3f} yaw={:.3f} (nominal x={:.3f} y={:.3f}; next z={:.3f}; "
+                     "{} images, {:.0f}% of the patch seen; lands at world {:.3f} {:.3f} {:.3f} yaw {:.3f}){}",
+                     side > 0 ? "L" : "R", foot_command_[0][0], foot_command_[0][1], foot_command_[0][2], foot_command_[0][5],
+                     nom_x, nom_y, foot_command_[1][2], patch_->num_frames(), 100.0f * seen / seen_buf_.size(),
+                     land.x, land.y, land.z, land.yaw, best < patch_->cells() ? "" : " in-place");
+    }
+
+    // Sole centre [x, y, z, yaw] (z = sole bottom) of a first footstep (x, y, z, yaw: stance-foot frame) in the yaw
+    // frame of the marker body (origin at the body).
+    std::array<float, 4> planner_sole_(float x, float y, float z, float yaw) const
+    {
+        const math::Vec3 body = math::quat_apply(robot_quat_w_, kin_->frame_pos(cam_fid_));
+        const float body_yaw = math::euler_xyz_from_quat(math::quat_mul(robot_quat_w_, kin_->frame_quat(cam_fid_)))[2];
+        const float cb = std::cos(body_yaw), sb = std::sin(body_yaw);
+        const math::Vec3 d = stance_foot_global_.pos - body;
+        const float pyaw = math::wrap_to_pi(math::euler_xyz_from_quat(stance_foot_global_.quat)[2] - body_yaw);
+        const float c = std::cos(pyaw), sn = std::sin(pyaw), syaw = pyaw + yaw;
+        return {cb * d[0] + sb * d[1] + c * x - sn * y + std::cos(syaw) * mcfg_.sole_offset_x,
+                -sb * d[0] + cb * d[1] + sn * x + c * y + std::sin(syaw) * mcfg_.sole_offset_x,
+                d[2] + z - mcfg_.ankle_height, syaw};
+    }
+
+    // World pose of the depth camera (rotation columns: optical axes). sim_odom: the true base position; otherwise
+    // carried by the stance foot (leg odometry), as the foot world poses.
+    void camera_world_(Eigen::Vector3f& p, Eigen::Matrix3f& R) const
+    {
+        Eigen::Vector3f pp;
+        Eigen::Matrix3f Rp;
+        planner_camera_in_pelvis(*kin_, cam_fid_, pcfg_, pp, Rp);
+        const Eigen::Matrix3f Rw = math::matrix_from_quat(robot_quat_w_);
+        const Eigen::Vector3f pg = Rw * pp;
+        if (foot_state_source_ == FootStateSource::SIM_ODOM)
+        {
+            p = base_pos_world_ + pg;
+            R = Rw * Rp;
+            return;
+        }
+        const float dyaw = stance_world_.yaw - math::euler_xyz_from_quat(stance_foot_global_.quat)[2];
+        const Eigen::Matrix3f Rz = Eigen::AngleAxisf(dyaw, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        p = Eigen::Vector3f(stance_world_.x, stance_world_.y, stance_world_.z) + Rz * (pg - stance_foot_global_.pos);
+        R = Rz * Rw * Rp;
     }
 
     void update_link_states_()
@@ -1078,8 +627,11 @@ private:
         };
         fill(stance_side_(), stance_foot_global_);
         fill(swing_side_(), swing_foot_global_);
-        // only the stance foot's linear velocity is read (preview state reset)
-        stance_foot_global_.lin = math::quat_apply(R, kin_->foot_lin_vel(stance_side_()));
+        // World velocity of the stance foot, read when the preview state is moved to a new stance frame. The foot is
+        // planted, so it is zero. The fixed-base FK velocity is the foot's velocity relative to the pelvis (about minus
+        // the walking speed): using it doubled the CoM velocity of the preview state at every footstep, and the CoM
+        // reference was 3 cm (up to 8 cm) off the training's (test/planner_replay_test.cpp, 2026-11-16).
+        stance_foot_global_.lin = math::Vec3::Zero();
 
         const math::Quat stance_yaw = math::yaw_quat(stance_foot_global_.quat);
         math::subtract_frame_transforms(stance_foot_global_.pos, stance_yaw,
@@ -1290,8 +842,6 @@ private:
     std::shared_ptr<Kinematics> kin_;
     VrpGenerator vrp_;
     PreviewController preview_;
-    FootCommandInput input_;
-    std::vector<FootCommandInput> local_plan_; // csv only
     std::vector<math::Vec3> vrp_ref_scratch_;
 
     long walking_tick_ = 0;
@@ -1312,35 +862,30 @@ private:
     std::vector<float> com_z_command_;
     std::vector<int> phase_indicator_;
 
-    bool vision_mode_ = false;
-    VisionConfig vcfg_;
-    std::vector<VisionTarget> pending_vision_; // latest frame (pelvis)
-    bool vision_pending_ = false;
-    double vision_now_ = 0.0;
-    struct VisionMemEntry { WorldPose pose; double stamp; };
-    std::map<int, VisionMemEntry> vision_memory_;
-    std::array<int, 2> planned_ids_ = {-1, -1};   // slots 0/1 (-1: station-keep)
+    MarkerConfig mcfg_;
+    std::vector<std::array<float, 4>> nominal_soles_;
+    std::vector<std::array<float, 4>> picked_soles_;
+    std::vector<std::array<float, 4>> score_tiles_;
+    float score_tiles_yaw_ = 0.0f;
+    int plan_seq_ = 0;
 
-    bool goal_mode_ = false;
-    GoalConfig gcfg_;
-    std::vector<Goal> goals_;
-    int goal_index_ = 0;             // active goal (== goals_.size(): all reached)
-    bool goal_arrived_ = false;
-    bool goals_done_logged_ = false;
-    float com_z_current_ = 0.0f;     // rate-limited com_z actually commanded
-    WorldPose prev_stance_world_;    // world pose of the foot that is swinging
+    bool planner_mode_ = false;
+    FootstepPlannerConfig pcfg_;
+    pinocchio::FrameIndex cam_fid_ = 0;
+    std::unique_ptr<PlannerPatch> patch_;
+    std::unique_ptr<PlannerNet> net_;
+    std::array<float, 3> joy_v_{};
+    std::array<float, 33> planner_proprio_{};
+    std::vector<float> patch_buf_, seen_buf_, proprio_buf_, score_buf_, z_buf_;
+    long planner_tick_ = 0;
+    int planner_pick_ = -1;
+    int planner_pick_seq_ = 0;
 
-    bool global_mode_ = false;
-    std::vector<GlobalFootTarget> global_plan_;
-    WorldPose global_init_stance_; // world pose of the initial stance foot (plan anchor)
-    int planner_index_ = 0;        // plan index of the step at buffer slot 0
-    // Kept in every mode; anchored at the initial stance foot (global_init_stance_ in global mode).
+    // World pose of the stance foot (odometry frame: the initial stance foot, or the simulator's world with sim_odom).
     WorldPose stance_world_;
 
     FootStateSource foot_state_source_ = FootStateSource::FK_ODOMETRY;
     math::Vec3 base_pos_world_ = math::Vec3::Zero(); // pelvis world pos (sim_odom)
-    // mujoco: ankle-roll body world poses [LEFT, RIGHT] from odom.foot_position_body
-    WorldPose foot_mujoco_[2]{};
     // fk_odometry: stance_world_.yaw == IMU foot yaw + this offset, latched at reset().
     float world_yaw_offset_ = 0.0f;
     bool world_yaw_latched_ = false;
@@ -1374,5 +919,47 @@ private:
     float standby_ik_com_z_ = 0.0f;
     std::array<float, 12> standby_ik_joints_{};
 };
+
+// FootstepCommand::Config of a deploy.yaml (start_phase_indicator is set by the caller).
+inline FootstepCommand::Config footstep_config_from_yaml(const YAML::Node& deploy)
+{
+    FootstepCommand::Config fcfg;
+    const YAML::Node fs = deploy["footstep"];
+    fcfg.future_foot_step_num = fs["future_foot_step_num"].as<int>(2);
+    fcfg.step_dt = deploy["step_dt"].as<float>();
+    fcfg.vrp_height = fs["vrp_height"].as<float>();
+    fcfg.pelv_com_offset = fs["pelv_com_offset"].as<float>();
+    fcfg.vrpx_offset = fs["vrpx_offset"].as<float>(0.03f);
+    fcfg.vrpy_offset = fs["vrpy_offset"].as<float>(0.02f);
+    fcfg.vrp_horizon_length = fs["vrp_horizon_length"].as<float>(5.0f);
+    fcfg.preview_horizon_length = fs["preview_horizon_length"].as<float>(2.0f);
+    // Must match the com_generate_type the policy was trained with (G13DFootEnvCfg / _heuri1 / _heuri2).
+    {
+        const std::string cgt = fs["com_generate_type"].as<std::string>(std::string("prev"));
+        if (cgt == "prev") fcfg.com_generate_type = ComGenerateType::PREV;
+        else if (cgt == "heuri") fcfg.com_generate_type = ComGenerateType::HEURI;
+        else if (cgt == "heuri2") fcfg.com_generate_type = ComGenerateType::HEURI2;
+        else throw std::runtime_error("footstep.com_generate_type must be one of "
+                                      "'prev', 'heuri', 'heuri2', got: " + cgt);
+        spdlog::info("[Footstep] com_generate_type: {}", cgt);
+    }
+    fcfg.swing_up_timing = fs["swing_up_timing"].as<float>(0.4f);
+    fcfg.swing_down_timing = fs["swing_down_timing"].as<float>(0.5f);
+    fcfg.ik_iters = fs["ik_iters"].as<int>(50);
+    fcfg.ik_lambda = fs["ik_lambda"].as<float>(0.05f);
+    fcfg.ik_pos_tol = fs["ik_pos_tol"].as<float>(1e-4f);
+    if (fs["ranges"])
+    {
+        auto r = fs["ranges"];
+        auto pair = [&](const std::string& k, float& lo, float& hi) {
+            if (r[k]) { lo = r[k][0].as<float>(); hi = r[k][1].as<float>(); }
+        };
+        pair("foot_pos_x", fcfg.foot_pos_x_min, fcfg.foot_pos_x_max);
+        pair("foot_pos_y", fcfg.foot_pos_y_min, fcfg.foot_pos_y_max);
+        pair("foot_pos_z", fcfg.foot_pos_z_min, fcfg.foot_pos_z_max);
+        pair("foot_rot_y", fcfg.foot_rot_y_min, fcfg.foot_rot_y_max);
+    }
+    return fcfg;
+}
 
 } // namespace isaaclab

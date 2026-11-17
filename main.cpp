@@ -1,10 +1,7 @@
 #include "FSM/CtrlFSM.h"
 #include "FSM/State_Passive.h"
 #include "FSM/State_FixStand.h"
-#include "FSM/State_RLBase.h"
-#include "State_Mimic.h"
 #include "State_Footstep.h"
-#include "State_MindYourStep.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
@@ -39,7 +36,7 @@ int main(int argc, char** argv)
     auto vm = param::helper(argc, argv);
 
     std::cout << " --- Unitree Robotics --- \n";
-    std::cout << "     G1-29dof Controller \n";
+    std::cout << "     G1-29dof Controller (footstep planner based on WM) \n";
 
     // Unitree DDS Config
     unitree::robot::ChannelFactory::Instance()->Init(0, vm["network"].as<std::string>());
@@ -59,10 +56,9 @@ int main(int argc, char** argv)
     if (FSMState::keyboard && !FSMState::keyboard->has_tty())
         spdlog::warn("No controlling TTY; keyboard FSM keys will not work.");
 
-    std::cout << "Joystick: [L2+Up] FixStand, [L2+Left] FixStand_MYS, then [R1+X/Y/A].\n";
-    std::cout << "Keyboard: type in THIS terminal (not the MuJoCo window).\n";
-    std::cout << "  [f] FixStand  [h] FixStand_MYS  [v] Velocity  [g] Footstep\n";
-    std::cout << "  [m] MindYourStep  [p] Passive.  Velocity: WASD / QE.  Walk start: [g].\n";
+    std::cout << "Joystick: [L2+Up] FixStand, then [R1+X] Stage1 / [R1+Y] Stage2, [Y] walk, [L2+B] Passive.\n";
+    std::cout << "Keyboard (type in THIS terminal, not the MuJoCo window):\n";
+    std::cout << "  [f] FixStand  [j] Stage1  [k] Stage2  [g] walk  [p] Passive.  Velocity: WASD, yaw: QE.\n";
 
     while (true)
     {
