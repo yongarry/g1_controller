@@ -14,6 +14,7 @@ class Algorithms
 {
 public:
     virtual std::vector<float> act(std::unordered_map<std::string, std::vector<float>> obs) = 0;
+    virtual void reset() {} // start of an episode (recurrent policies zero their hidden state)
 
     std::vector<float> get_action()
     {
@@ -58,12 +59,26 @@ public:
         auto output_name = session->GetOutputNameAllocated(0, allocator);
         output_names.push_back(output_name.release());
 
+        // GRU tracker (tools/export_onnx.py): input "h_in" and output "h_out" carry the hidden state between steps
+        for (size_t i = 0; i < input_names.size(); ++i)
+            if (std::string(input_names[i]) == "h_in") h_idx = (int)i;
+        if (h_idx >= 0) {
+            if (session->GetOutputCount() != 2) throw std::runtime_error("recurrent policy: expected outputs actions, h_out");
+            auto h_out_name = session->GetOutputNameAllocated(1, allocator);
+            output_names.push_back(h_out_name.release());
+            h.assign(input_sizes[h_idx], 0.0f);
+        }
+
         action.resize(output_shape[1]);
     }
+
+    void reset() override { std::fill(h.begin(), h.end(), 0.0f); }
 
     std::vector<float> act(std::unordered_map<std::string, std::vector<float>> obs)
     {
         auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+
+        if (h_idx >= 0) obs[input_names[h_idx]] = h;
 
         // make sure all input names are in obs
         for (const auto& name : input_names) {
@@ -88,7 +103,11 @@ public:
         }
 
         // Run the model
-        auto output_tensor = session->Run(Ort::RunOptions{nullptr}, input_names.data(), input_tensors.data(), input_tensors.size(), output_names.data(), 1);
+        auto output_tensor = session->Run(Ort::RunOptions{nullptr}, input_names.data(), input_tensors.data(), input_tensors.size(), output_names.data(), output_names.size());
+        if (h_idx >= 0) {
+            const float* hn = output_tensor[1].GetTensorMutableData<float>();
+            std::copy(hn, hn + h.size(), h.begin());
+        }
 
         // Copy output data
         auto floatarr = output_tensor.front().GetTensorMutableData<float>();
@@ -109,5 +128,8 @@ private:
     std::vector<std::vector<int64_t>> input_shapes;
     std::vector<int64_t> input_sizes;
     std::vector<int64_t> output_shape;
+
+    int h_idx = -1;       // index of the "h_in" input, -1: feed-forward policy
+    std::vector<float> h; // GRU hidden state between steps
 };
 };

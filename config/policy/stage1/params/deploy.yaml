@@ -1,9 +1,24 @@
 # Stage 1: the blind tracker on nominal footsteps from the joystick (x = vx T, y = +-0.237 + vy T, yaw = wz T, z = 0).
-# Flat ground only: the footsteps ignore the terrain. exported/policy.onnx = the tracker (sm_joy_v3_back model_5000,
-# 2026-11-16; the previous sm_joy_v2 tracker is exported/policy_sm_joy_v2.onnx.bak).
+# Flat ground only: the footsteps ignore the terrain. exported/policy.onnx = the GRU tracker (sm_joy_gru_dr_10k
+# model_10000, G1-3d-Joystick-GRU, 2026-11-18): one frame in, hidden state carried by OrtRunner and zeroed at the walk
+# start (env reset). Previous MLP trackers: exported/policy_sm_joy_v3_back.onnx.bak (10 frames, 2 apart: restore the
+# history_length 10 / skip_history_tick 2 of deploy_common by deleting the observations block below) and
+# policy_sm_joy_v2.onnx.bak.
 extends: ../../deploy_common.yaml
 footstep:
   mode: stage1
   planner:
     velocity:
-      vx: [-0.3, 0.5]              # sm_joy_v3_back is trained on -0.3 .. 0.5 m/s
+      vx: [-0.3, 0.5]              # the GRU tracker is trained on -0.3 .. 0.5 m/s
+
+# one frame (62) = [ang vel, gravity, leg q, leg qd, IK target, phase, footstep pose (6), last q_des]
+observations:
+  base_ang_vel: {params: {}, scale: null, clip: null, history_length: 1}
+  use_gym_history: true
+  projected_gravity: {params: {}, scale: null, clip: null, history_length: 1}
+  joint_pos_ordered_rel: {params: {}, scale: null, clip: null, history_length: 1}
+  joint_vel_ordered: {params: {}, scale: null, clip: null, history_length: 1}
+  joint_ik_target: {params: {}, scale: null, clip: null, history_length: 1}
+  phase: {params: {}, scale: null, clip: null, history_length: 1}
+  foot_commands_pose: {params: {}, scale: null, clip: null, history_length: 1}
+  last_processed_action: {params: {}, scale: null, clip: null, history_length: 1}

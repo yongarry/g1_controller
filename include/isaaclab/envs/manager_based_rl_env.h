@@ -54,6 +54,7 @@ public:
         robot->update();
         action_manager->reset();
         observation_manager->reset();
+        if (alg) alg->reset(); // GRU tracker: zero hidden state, as at an Isaac episode start
     }
 
     void step()
