@@ -69,3 +69,10 @@ FSM:
     transitions:
       Passive: LT + B.on_pressed | p.on_pressed
     policy_dir: config/policy/stage2
+
+# High-rate vibration log from the 1 kHz FSM (policy step_dt is 50 Hz).
+# A timestamped file per process start. file: "" disables.
+# gyro rad/s, acc m/s^2, rpy rad, joint q/dq/qdes rad, tau_est N.m.
+vibration_log:
+  file: log/vibration.csv
+  hz: 500

@@ -3,6 +3,7 @@
 #include "Types.h"
 #include "param.h"
 #include "FSM/BaseState.h"
+#include "VibLogger.h"
 #include "isaaclab/devices/keyboard/keyboard.h"
 #include "unitree_joystick_dsl.hpp"
 
@@ -63,6 +64,8 @@ public:
 
     void post_run()
     {
+        // After this tick's motor targets are written. Decimated; the file write is off this thread.
+        VibLogger::instance().sample(getState());
         lowcmd->unlockAndPublish();
     }
 

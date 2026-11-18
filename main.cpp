@@ -2,6 +2,7 @@
 #include "FSM/State_Passive.h"
 #include "FSM/State_FixStand.h"
 #include "State_Footstep.h"
+#include "VibLogger.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
@@ -51,6 +52,7 @@ int main(int argc, char** argv)
     
     // Initialize FSM
     auto fsm = std::make_unique<CtrlFSM>(param::config["FSM"]);
+    VibLogger::instance().start();
     fsm->start();
 
     if (FSMState::keyboard && !FSMState::keyboard->has_tty())
